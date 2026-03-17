@@ -67,14 +67,23 @@ class IAMGraphBuilder:
 
         G = nx.DiGraph()
 
-    # open fresh session
         with self.driver.session() as session:
-         records = session.run(
-            "MATCH (a)-[r]->(b) RETURN a.id AS src, b.id AS tgt"
-        ).data()   
+          records = session.run("""
+            MATCH (a)-[r]->(b)
+            RETURN a.id AS src,
+                   labels(a)[0] AS src_label,
+                   b.id AS tgt,
+                   labels(b)[0] AS tgt_label
+            """).data()
 
-    # process OUTSIDE session
-         for record in records:
-                 G.add_edge(record["src"], record["tgt"])
+        for record in records:
+         # add source node with label
+            G.add_node(record["src"], label=record["src_label"])
+
+        # add target node with label
+            G.add_node(record["tgt"], label=record["tgt_label"])
+
+        # add edge
+            G.add_edge(record["src"], record["tgt"])
 
         return G
