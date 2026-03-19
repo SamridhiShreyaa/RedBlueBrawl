@@ -22,10 +22,18 @@ def get_permissions(G: nx.DiGraph):
 # -------------------------------
 
 def get_user_roles(G: nx.DiGraph, user_id: str):
-    return list(G.successors(user_id))
+    if not G.has_node(user_id):
+        return []
+    return [
+        node_id
+        for node_id in G.successors(user_id)
+        if G.nodes[node_id].get("label") == "Role"
+    ]
 
 
 def get_role_permissions(G: nx.DiGraph, role_id: str):
+    if not G.has_node(role_id):
+        return []
     return list(G.successors(role_id))
 
 

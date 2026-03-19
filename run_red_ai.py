@@ -1,0 +1,29 @@
+import os
+import sys
+
+from src.adversarial.red_agent import RedAgent
+
+try:
+    from src.graph.builder import IAMGraphBuilder
+
+    builder = IAMGraphBuilder(
+        uri=os.getenv("NEO4J_URI", "bolt://localhost:7687"),
+        user=os.getenv("NEO4J_USER", "neo4j"),
+        password=os.getenv("NEO4J_PASSWORD", "changeme"),
+    )
+
+    graph = builder.get_networkx_graph()
+    red = RedAgent(graph)
+    attack_paths = red.find_escalation_paths(max_paths=5)
+
+    print(f"Found {len(attack_paths)} attack path(s)")
+    for i, attack in enumerate(attack_paths, start=1):
+        print(f"\n[{i}] Score={attack.risk_score} Type={attack.attack_type}")
+        print("Path:", " -> ".join(attack.nodes))
+        print("Description:", attack.description)
+except Exception as exc:
+    print(f"Red AI run failed: {exc}")
+    sys.exit(1)
+finally:
+    if "builder" in locals():
+        builder.close()
