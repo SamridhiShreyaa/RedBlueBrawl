@@ -174,14 +174,18 @@ class BlueAgent:
                     # Remove edges: user -> role
                     role_id = action.target_id
                     users = action.details.get("affected_users", [])
+                    removed_any = False
                     for user in users:
                         if self.graph.has_edge(user, role_id):
                             self.graph.remove_edge(user, role_id)
-                            applied_count += 1
-                    self.defense_history.append(action)
+                            removed_any = True
+                    if removed_any:
+                        self.defense_history.append(action)
+                        applied_count += 1
                 
                 elif action.action_type == DefenseActionType.SPLIT_ROLE:
-                    # Split a role into two: one restricted, one sensitive
+                    # True split: move non-sensitive permissions to a restricted role,
+                    # keep sensitive permissions on the original role.
                     role_id = action.target_id
                     new_roles = action.details.get("new_roles", [])
                     
@@ -191,6 +195,7 @@ class BlueAgent:
                     all_perms = get_role_permissions(self.graph, role_id)
                     sensitive_perms = [p for p in all_perms if 
                         self.graph.nodes[p].get("is_sensitive", False)]
+                    non_sensitive_perms = [p for p in all_perms if p not in sensitive_perms]
                     
                     # Create restricted role (non-sensitive permissions only)
                     if new_roles:
@@ -201,6 +206,11 @@ class BlueAgent:
                         for perm in all_perms:
                             if perm not in sensitive_perms:
                                 self.graph.add_edge(restricted_role, perm, relation="GRANTS")
+
+                        # Remove moved permissions from original role to avoid edge duplication.
+                        for perm in non_sensitive_perms:
+                            if self.graph.has_edge(role_id, perm):
+                                self.graph.remove_edge(role_id, perm)
                         
                         # Reassign users to restricted role
                         users = [u for u in self.graph.predecessors(role_id)
@@ -210,6 +220,10 @@ class BlueAgent:
                             if self.graph.has_edge(user, role_id):
                                 self.graph.remove_edge(user, role_id)
                                 self.graph.add_edge(user, restricted_role, relation="HAS_ROLE")
+
+                        # If a role no longer grants anything, delete it to compress attack surface.
+                        if self.graph.has_node(role_id) and self.graph.out_degree(role_id) == 0:
+                            self.graph.remove_node(role_id)
                     
                     self.defense_history.append(action)
                     applied_count += 1
@@ -217,8 +231,25 @@ class BlueAgent:
             except Exception as e:
                 print(f"Error applying action {action.action_type}: {e}")
                 continue
+
+        self._prune_orphan_roles()
         
         return self.graph, applied_count
+
+    def _prune_orphan_roles(self) -> None:
+        """Remove role nodes that have no users and no permissions."""
+        roles = [n for n, d in self.graph.nodes(data=True) if d.get("label") == "Role"]
+        for role in roles:
+            has_users = any(
+                self.graph.nodes[pred].get("label") == "User"
+                for pred in self.graph.predecessors(role)
+            )
+            has_permissions = any(
+                self.graph.nodes[succ].get("label") == "Permission"
+                for succ in self.graph.successors(role)
+            )
+            if not has_users and not has_permissions:
+                self.graph.remove_node(role)
 
     def compute_metrics(self) -> Dict:
         """
