@@ -52,7 +52,11 @@ def render():
                 )
                 st.plotly_chart(fig, use_container_width=True)
             except Exception as e:
-                st.dataframe(pd.DataFrame(list(original_dist.items()), columns=["Level", "Count"]))
+                fallback_orig_df = pd.DataFrame([
+                    {"Level": level, "Count": len(perms)}
+                    for level, perms in original_dist.items()
+                ])
+                st.dataframe(fallback_orig_df, use_container_width=True, hide_index=True)
     
     with col_hard:
         st.markdown("### Hardened Risk Distribution")
@@ -71,7 +75,11 @@ def render():
                 )
                 st.plotly_chart(fig, use_container_width=True)
             except Exception as e:
-                st.dataframe(pd.DataFrame(list(hardened_dist.items()), columns=["Level", "Count"]))
+                fallback_hard_df = pd.DataFrame([
+                    {"Level": level, "Count": len(perms)}
+                    for level, perms in hardened_dist.items()
+                ])
+                st.dataframe(fallback_hard_df, use_container_width=True, hide_index=True)
     
     # Top riskiest permissions
     st.divider()
