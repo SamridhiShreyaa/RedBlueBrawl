@@ -2,7 +2,11 @@
 
 import streamlit as st
 import pandas as pd
-from .utils import get_results
+
+try:
+    from .utils import get_results
+except ImportError:
+    from pages.utils import get_results
 
 def render():
     st.title("🔴 Threat Intelligence")
@@ -42,8 +46,8 @@ def render():
             type_df = pd.DataFrame(list(attack_types.items()), columns=["Type", "Count"])
             fig = px.bar(type_df, x="Type", y="Count", title="Attack Type Breakdown")
             st.plotly_chart(fig, use_container_width=True)
-        except:
-            pass
+        except Exception as e:
+            st.warning(f"Could not render attack type chart: {str(e)[:50]}")
     
     # Top attack paths table
     st.divider()

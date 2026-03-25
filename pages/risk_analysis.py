@@ -2,7 +2,11 @@
 
 import streamlit as st
 import pandas as pd
-from .utils import get_results
+
+try:
+    from .utils import get_results
+except ImportError:
+    from pages.utils import get_results
 
 def render():
     st.title("⚠️ Risk Analysis")
@@ -47,7 +51,7 @@ def render():
                     title="Permissions by Risk Level (Before)"
                 )
                 st.plotly_chart(fig, use_container_width=True)
-            except:
+            except Exception as e:
                 st.dataframe(pd.DataFrame(list(original_dist.items()), columns=["Level", "Count"]))
     
     with col_hard:
@@ -66,7 +70,7 @@ def render():
                     title="Permissions by Risk Level (After)"
                 )
                 st.plotly_chart(fig, use_container_width=True)
-            except:
+            except Exception as e:
                 st.dataframe(pd.DataFrame(list(hardened_dist.items()), columns=["Level", "Count"]))
     
     # Top riskiest permissions

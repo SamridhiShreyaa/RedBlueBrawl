@@ -8,6 +8,15 @@ import plotly.express as px
 import streamlit as st
 
 
+# ⚠️ DEPRECATED: This file is legacy. Use app.py instead!
+# Run: streamlit run app.py
+st.warning("""
+⚠️ **LEGACY DASHBOARD** - This is the old single-file implementation.
+Please use **`streamlit run app.py`** instead for the latest multi-page dashboard.
+This file will be removed in a future version.
+""", icon="⚠️")
+
+
 ROOT_DIR = Path(__file__).resolve().parent
 DATASET_PATH = ROOT_DIR / "data" / "iam_dataset.json"
 RESULTS_PATH = ROOT_DIR / "results.json"
@@ -226,7 +235,7 @@ def _show_pipeline_tab(results: dict) -> None:
     )
     improve_col2.metric(
         "Risky exposures reduced",
-        metrics.get("hardened_risky_exposures", 0) - metrics.get("original_risky_exposures", 0),
+        metrics.get("original_risky_exposures", 0) - metrics.get("hardened_risky_exposures", 0),
     )
     improve_col3.metric(
         "Least privilege improvement (%)",
@@ -247,7 +256,7 @@ def _show_pipeline_tab(results: dict) -> None:
                 values="permissions",
                 names="risk_level",
                 title="Original Permissions by Risk Level",
-                color_discrete_sequence=px.colors.sequential.RdYlGn_r,
+                color_discrete_sequence=px.colors.diverging.RdYlGn,
             )
             st.plotly_chart(chart, use_container_width=True)
         else:
@@ -262,7 +271,7 @@ def _show_pipeline_tab(results: dict) -> None:
                 values="permissions",
                 names="risk_level",
                 title="Hardened Permissions by Risk Level",
-                color_discrete_sequence=px.colors.sequential.RdYlGn_r,
+                color_discrete_sequence=px.colors.diverging.RdYlGn,
             )
             st.plotly_chart(chart, use_container_width=True)
         else:

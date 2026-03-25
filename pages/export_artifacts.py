@@ -2,7 +2,11 @@
 
 import streamlit as st
 import json
-from .utils import get_results, get_defense_report, REPORT_PATH, RESULTS_PATH
+
+try:
+    from .utils import get_results, get_defense_report, REPORT_PATH, RESULTS_PATH
+except ImportError:
+    from pages.utils import get_results, get_defense_report, REPORT_PATH, RESULTS_PATH
 
 def render():
     st.title("📥 Export & Artifacts")

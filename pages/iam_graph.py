@@ -2,7 +2,11 @@
 
 import streamlit as st
 import pandas as pd
-from .utils import load_graph, get_dataset
+
+try:
+    from .utils import load_graph, get_dataset
+except ImportError:
+    from pages.utils import load_graph, get_dataset
 
 def render():
     st.title("📈 IAM Graph Visualization")
@@ -74,8 +78,8 @@ def render():
                 title="Edge Type Distribution"
             )
             st.plotly_chart(fig, use_container_width=True)
-        except:
-            pass
+        except Exception as e:
+            st.warning(f"Could not render edge chart: {str(e)[:50]}")
     
     # Graph visualization
     st.divider()

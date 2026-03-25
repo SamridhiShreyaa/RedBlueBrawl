@@ -12,7 +12,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-st.sidebar.title("� IAM Security Platform")
+st.sidebar.title("🔐 IAM Security Platform")
 st.sidebar.divider()
 
 page = st.sidebar.radio(

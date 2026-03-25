@@ -2,7 +2,11 @@
 
 import streamlit as st
 from datetime import datetime
-from .utils import get_dataset, get_results, DATASET_PATH, RESULTS_PATH
+
+try:
+    from .utils import get_dataset, get_results, DATASET_PATH, RESULTS_PATH
+except ImportError:
+    from pages.utils import get_dataset, get_results, DATASET_PATH, RESULTS_PATH
 
 def render():
     st.title("📊 System Overview")
@@ -60,8 +64,8 @@ def render():
             st.write(f"- ✅ Connected")
             st.write(f"- Nodes: {stats.get('total_nodes', 0)}")
             st.write(f"- Edges: {stats.get('total_edges', 0)}")
-        except:
-            st.write("- ⚠️ Not connected (run demo to load)")
+        except Exception as e:
+            st.write(f"- ⚠️ Not connected (run demo to load): {str(e)[:50]}")
     
     # Quick facts
     st.divider()

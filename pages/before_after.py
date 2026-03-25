@@ -2,7 +2,11 @@
 
 import streamlit as st
 import pandas as pd
-from .utils import get_results
+
+try:
+    from .utils import get_results
+except ImportError:
+    from pages.utils import get_results
 
 def render():
     st.title("📉 Before vs After Metrics")
@@ -64,17 +68,17 @@ def render():
         "Original": [
             metrics.get("original_edges", 0),
             metrics.get("original_risky_exposures", 0),
-            "3.0 (estimated)"
+            f"{metrics.get('original_avg_perms_per_role', 0):.2f}"
         ],
         "Hardened": [
             metrics.get("hardened_edges", 0),
             metrics.get("hardened_risky_exposures", 0),
-            "2.64 (estimated)"
+            f"{metrics.get('hardened_avg_perms_per_role', 0):.2f}"
         ],
         "Improvement": [
             f"-{edges_removed}",
             f"-{exposures_reduced}",
-            "-0.36"
+            f"-{metrics.get('original_avg_perms_per_role', 0) - metrics.get('hardened_avg_perms_per_role', 0):.2f}"
         ]
     })
     
@@ -124,8 +128,8 @@ def render():
                 color_discrete_map={"Original": "#FF6B6B", "Hardened": "#51CF66"}
             )
             st.plotly_chart(fig, use_container_width=True)
-    except:
-        st.info("Install plotly for charts: pip install plotly")
+    except Exception as e:
+        st.info(f"Install plotly for charts: pip install plotly ({str(e)[:30]})")
     
     # Summary statement
     st.divider()

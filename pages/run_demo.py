@@ -6,6 +6,11 @@ import os
 import sys
 from pathlib import Path
 
+try:
+    from .utils import get_results
+except ImportError:
+    from pages.utils import get_results
+
 def render():
     st.title("▶️ Analysis Execution")
     st.caption("Run complete threat assessment and remediation workflow")

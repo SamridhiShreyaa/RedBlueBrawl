@@ -2,7 +2,11 @@
 
 import streamlit as st
 import pandas as pd
-from .utils import get_results
+
+try:
+    from .utils import get_results
+except ImportError:
+    from pages.utils import get_results
 
 def render():
     st.title("🔵 Remediation Strategy")
@@ -55,8 +59,8 @@ def render():
             )
             fig.update_layout(showlegend=False)
             st.plotly_chart(fig, use_container_width=True)
-        except:
-            pass
+        except Exception as e:
+            st.warning(f"Could not render action chart: {str(e)[:50]}")
     
     # Detailed actions
     st.divider()
