@@ -143,17 +143,18 @@ STATUS: Complete ✅
         st.dataframe(pd.DataFrame(summary_data), use_container_width=True, hide_index=True)
     
     with tab2:
+        metrics = results.get("metrics", {})
         metrics_data = {
             "Metric": ["Edges", "Risky Exposures", "Avg Perms/Role"],
             "Before": [
-                results.get("metrics", {}).get("original_edges", 0),
-                results.get("metrics", {}).get("original_risky_exposures", 0),
-                "3.0"
+                metrics.get("original_edges", 0),
+                metrics.get("original_risky_exposures", 0),
+                f"{metrics.get('original_avg_perms_per_role', 0):.2f}"
             ],
             "After": [
-                results.get("metrics", {}).get("hardened_edges", 0),
-                results.get("metrics", {}).get("hardened_risky_exposures", 0),
-                "2.64"
+                metrics.get("hardened_edges", 0),
+                metrics.get("hardened_risky_exposures", 0),
+                f"{metrics.get('hardened_avg_perms_per_role', 0):.2f}"
             ]
         }
         st.dataframe(pd.DataFrame(metrics_data), use_container_width=True, hide_index=True)
