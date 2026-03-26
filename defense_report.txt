@@ -1,0 +1,31 @@
+=== BLUE AI DEFENSE REPORT ===
+Total Actions: 8
+
+  remove_permission: 4
+  split_role: 4
+
+=== ACTIONS DETAIL ===
+1. remove_permission on perm_8
+   Risk Reduction: 2.0
+   Justification: Remove perm_8 from role_1 - sensitive permission in attack paths
+2. remove_permission on perm_8
+   Risk Reduction: 2.0
+   Justification: Remove perm_8 from role_3 - sensitive permission in attack paths
+3. remove_permission on perm_8
+   Risk Reduction: 2.0
+   Justification: Remove perm_8 from role_17 - sensitive permission in attack paths
+4. remove_permission on perm_8
+   Risk Reduction: 2.0
+   Justification: Remove perm_8 from role_18 - sensitive permission in attack paths
+5. split_role on role_3
+   Risk Reduction: 3.5
+   Justification: Split role_3 into restricted and sensitive roles for least privilege
+6. split_role on role_9
+   Risk Reduction: 3.5
+   Justification: Split role_9 into restricted and sensitive roles for least privilege
+7. split_role on role_17
+   Risk Reduction: 3.5
+   Justification: Split role_17 into restricted and sensitive roles for least privilege
+8. split_role on role_18
+   Risk Reduction: 3.5
+   Justification: Split role_18 into restricted and sensitive roles for least privilege

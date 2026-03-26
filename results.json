@@ -1,0 +1,129 @@
+{
+  "summary": {
+    "total_nodes": 250,
+    "total_edges": 414,
+    "attack_paths_discovered": 10,
+    "defensive_actions_generated": 8,
+    "defensive_actions_applied": 8
+  },
+  "red_ai_findings": {
+    "attack_count": 10,
+    "attacks": [
+      {
+        "risk_score": 7.5,
+        "type": "assume_role_inference",
+        "path_length": 4,
+        "permissions_used": 1
+      },
+      {
+        "risk_score": 7.5,
+        "type": "assume_role_inference",
+        "path_length": 4,
+        "permissions_used": 1
+      },
+      {
+        "risk_score": 7.5,
+        "type": "assume_role_inference",
+        "path_length": 4,
+        "permissions_used": 1
+      },
+      {
+        "risk_score": 7.5,
+        "type": "assume_role_inference",
+        "path_length": 4,
+        "permissions_used": 1
+      },
+      {
+        "risk_score": 7.5,
+        "type": "assume_role_inference",
+        "path_length": 4,
+        "permissions_used": 1
+      }
+    ]
+  },
+  "blue_ai_actions": {
+    "total_actions": 8,
+    "roles_split": 4,
+    "permissions_removed": 4,
+    "estimated_risk_reduction": 22.0
+  },
+  "metrics": {
+    "original_edges": 414,
+    "hardened_edges": 410,
+    "edges_removed": 4,
+    "original_risky_exposures": 584,
+    "hardened_risky_exposures": 487,
+    "least_privilege_improvement_pct": 12.12
+  },
+  "risk_analysis": {
+    "original_risk_distribution": {
+      "CRITICAL": [
+        "s3:DeleteObject",
+        "ec2:TerminateInstances",
+        "iam:CreateUser",
+        "iam:AttachRolePolicy",
+        "iam:PassRole",
+        "sts:AssumeRole",
+        "kms:Decrypt"
+      ],
+      "HIGH": [
+        "s3:GetObject",
+        "s3:PutObject",
+        "ec2:StartInstances"
+      ]
+    },
+    "hardened_risk_distribution": {
+      "CRITICAL": [
+        "s3:DeleteObject",
+        "ec2:TerminateInstances",
+        "iam:CreateUser",
+        "iam:AttachRolePolicy",
+        "iam:PassRole",
+        "sts:AssumeRole",
+        "kms:Decrypt"
+      ],
+      "HIGH": [
+        "s3:GetObject",
+        "s3:PutObject",
+        "ec2:StartInstances"
+      ]
+    },
+    "top_riskiest_permissions": [
+      {
+        "action": "s3:DeleteObject",
+        "risk_level": "CRITICAL",
+        "risk_score": 10.0,
+        "exposure_count": 48,
+        "justification": "marked as sensitive; exposed to 48 users"
+      },
+      {
+        "action": "ec2:TerminateInstances",
+        "risk_level": "CRITICAL",
+        "risk_score": 10.0,
+        "exposure_count": 115,
+        "justification": "marked as sensitive; exposed to 115 users"
+      },
+      {
+        "action": "iam:CreateUser",
+        "risk_level": "CRITICAL",
+        "risk_score": 10.0,
+        "exposure_count": 50,
+        "justification": "marked as sensitive; exposed to 50 users"
+      },
+      {
+        "action": "iam:AttachRolePolicy",
+        "risk_level": "CRITICAL",
+        "risk_score": 10.0,
+        "exposure_count": 80,
+        "justification": "marked as sensitive; exposed to 80 users"
+      },
+      {
+        "action": "iam:PassRole",
+        "risk_level": "CRITICAL",
+        "risk_score": 10.0,
+        "exposure_count": 89,
+        "justification": "marked as sensitive; exposed to 89 users; enables privilege escalation"
+      }
+    ]
+  }
+}
