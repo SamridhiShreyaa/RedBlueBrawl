@@ -11,6 +11,9 @@ import os
 import sys
 import json
 
+# Add parent directory to path for imports
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+
 try:
     from src.graph.builder import IAMGraphBuilder
     from src.adversarial.red_agent import RedAgent

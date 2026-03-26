@@ -1,6 +1,9 @@
 import os
 import sys
 
+# Add parent directory to path for imports
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+
 from src.adversarial.red_agent import RedAgent
 
 try:

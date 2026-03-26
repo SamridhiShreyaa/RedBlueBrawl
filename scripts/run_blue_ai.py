@@ -11,6 +11,9 @@ import os
 import sys
 import json
 
+# Add parent directory to path for imports
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+
 from src.adversarial.red_agent import RedAgent
 from src.adversarial.blue_agent import BlueAgent
 from src.causal.risk_scorer import CausalRiskScorer
