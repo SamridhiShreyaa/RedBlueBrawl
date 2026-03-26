@@ -12,6 +12,13 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+# 🚫 Hide default Streamlit pages navigation (IMPORTANT FIX)
+st.markdown("""
+    <style>
+        [data-testid="stSidebarNav"] {display: none;}
+    </style>
+""", unsafe_allow_html=True)
+
 st.sidebar.title("🔐 IAM Security Platform")
 st.sidebar.divider()
 
