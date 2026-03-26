@@ -144,17 +144,19 @@ STATUS: Complete ✅
     
     with tab2:
         metrics = results.get("metrics", {})
+        original_avg_perms = metrics.get('original_avg_perms_per_role', 0)
+        hardened_avg_perms = metrics.get('hardened_avg_perms_per_role', 0)
         metrics_data = {
             "Metric": ["Edges", "Risky Exposures", "Avg Perms/Role"],
             "Before": [
-                metrics.get("original_edges", 0),
-                metrics.get("original_risky_exposures", 0),
-                f"{metrics.get('original_avg_perms_per_role', 0):.2f}"
+                str(metrics.get("original_edges", 0)),
+                str(metrics.get("original_risky_exposures", 0)),
+                f"{float(original_avg_perms):.2f}"
             ],
             "After": [
-                metrics.get("hardened_edges", 0),
-                metrics.get("hardened_risky_exposures", 0),
-                f"{metrics.get('hardened_avg_perms_per_role', 0):.2f}"
+                str(metrics.get("hardened_edges", 0)),
+                str(metrics.get("hardened_risky_exposures", 0)),
+                f"{float(hardened_avg_perms):.2f}"
             ]
         }
         st.dataframe(pd.DataFrame(metrics_data), use_container_width=True, hide_index=True)

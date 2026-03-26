@@ -29,7 +29,7 @@ def orchestrate_full_pipeline():
     """
     
     print("\n" + "=" * 80)
-    print("🔴 🔵 RED vs BLUE AI - Self-Healing IAM System")
+    print("[RED][BLUE] RED vs BLUE AI - Self-Healing IAM System")
     print("=" * 80)
     
     builder = None
@@ -48,7 +48,7 @@ def orchestrate_full_pipeline():
         graph = builder.get_networkx_graph()
         stats = builder.get_graph_stats()
         
-        print(f"✓ Graph loaded successfully")
+        print("[OK] Graph loaded successfully")
         print(f"  - Nodes: {stats['total_nodes']}")
         print(f"  - Edges: {stats['total_edges']}")
         
@@ -59,14 +59,14 @@ def orchestrate_full_pipeline():
         red = RedAgent(graph)
         attack_paths = red.find_escalation_paths(max_paths=10)
         
-        print(f"✓ Red AI found {len(attack_paths)} attack path(s)")
+        print(f"[OK] Red AI found {len(attack_paths)} attack path(s)")
         
         if attack_paths:
             print("\nTop attack paths:")
             for i, attack in enumerate(attack_paths[:3], 1):
                 print(f"\n  [{i}] Risk Score: {attack.risk_score}")
                 print(f"      Type: {attack.attack_type}")
-                print(f"      Path: {' → '.join(attack.nodes)}")
+                print(f"      Path: {' -> '.join(attack.nodes)}")
                 print(f"      Description: {attack.description}")
         
         # ===== PHASE 3: BLUE AI - GENERATE DEFENSES =====
@@ -76,7 +76,7 @@ def orchestrate_full_pipeline():
         blue = BlueAgent(graph)
         strategy = blue.generate_defenses(attack_paths)
         
-        print(f"✓ Blue AI generated {len(strategy.actions)} defensive actions")
+        print(f"[OK] Blue AI generated {len(strategy.actions)} defensive actions")
         print(f"  - Roles to split: {strategy.permissive_roles_targeted}")
         print(f"  - Permissions to remove: {strategy.perms_removed}")
         print(f"  - Estimated risk reduction: {strategy.total_risk_reduction:.1f}")
@@ -87,7 +87,7 @@ def orchestrate_full_pipeline():
         
         hardened_graph, applied_count = blue.apply_defenses(strategy)
         
-        print(f"✓ Applied {applied_count} defensive actions")
+        print(f"[OK] Applied {applied_count} defensive actions")
         
         # ===== PHASE 5: COMPUTE METRICS =====
         print("\n[PHASE 5] Computing Before/After Security Metrics...")
@@ -189,47 +189,47 @@ def orchestrate_full_pipeline():
         with open("results.json", "w") as f:
             json.dump(results, f, indent=2)
         
-        print(f"✓ Results saved to results.json")
+        print("[OK] Results saved to results.json")
         
         # Save defense report
         defense_report = blue.get_defense_report()
         with open("defense_report.txt", "w") as f:
             f.write(defense_report)
         
-        print(f"✓ Defense report saved to defense_report.txt")
+        print("[OK] Defense report saved to defense_report.txt")
         
         # ===== FINAL SUMMARY =====
         print("\n" + "=" * 80)
-        print("✅ SIMULATION COMPLETED SUCCESSFULLY")
+        print("[SUCCESS] SIMULATION COMPLETED SUCCESSFULLY")
         print("=" * 80)
         
         print(f"""
 EXECUTIVE SUMMARY:
-─────────────────────────────────────────────────────────────
-🔴 Red AI discovered {len(attack_paths)} privilege escalation paths
-🔵 Blue AI generated {len(strategy.actions)} defensive actions (applied {applied_count})
+-------------------------------------------------------------
+Red AI discovered {len(attack_paths)} privilege escalation paths
+Blue AI generated {len(strategy.actions)} defensive actions (applied {applied_count})
 
 SECURITY IMPROVEMENT:
-─────────────────────────────────────────────────────────────
-  → Edges reduced: {metrics['edges_removed']} ({metrics['original_edges']} → {metrics['current_edges']})
-  → Risky exposures reduced: {metrics['risky_exposures_reduced']} 
-  → Least privilege improved: +{metrics['least_privilege_improvement']}%
+-------------------------------------------------------------
+    - Edges reduced: {metrics['edges_removed']} ({metrics['original_edges']} -> {metrics['current_edges']})
+    - Risky exposures reduced: {metrics['risky_exposures_reduced']} 
+    - Least privilege improved: +{metrics['least_privilege_improvement']}%
 
 CAUSAL RISK ATTRIBUTION:
-─────────────────────────────────────────────────────────────
-  → Original critical permissions: {len(original_risk['permissions_by_risk_level'].get('CRITICAL', []))}
-  → Hardened critical permissions: {len(hardened_risk['permissions_by_risk_level'].get('CRITICAL', []))}
+-------------------------------------------------------------
+    - Original critical permissions: {len(original_risk['permissions_by_risk_level'].get('CRITICAL', []))}
+    - Hardened critical permissions: {len(hardened_risk['permissions_by_risk_level'].get('CRITICAL', []))}
 
 OUTPUTS:
-─────────────────────────────────────────────────────────────
-  ✓ results.json - Full metrics and analysis
-  ✓ defense_report.txt - Detailed defense actions
+-------------------------------------------------------------
+    [OK] results.json - Full metrics and analysis
+    [OK] defense_report.txt - Detailed defense actions
 """)
         
         return results
         
     except Exception as e:
-        print(f"\n❌ Pipeline failed: {e}")
+        print(f"\n[ERROR] Pipeline failed: {e}")
         import traceback
         traceback.print_exc()
         sys.exit(1)

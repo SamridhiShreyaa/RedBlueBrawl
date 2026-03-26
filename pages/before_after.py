@@ -58,6 +58,10 @@ def render():
     # Detailed metrics
     st.divider()
     st.subheader("Detailed Metrics Comparison")
+
+    # Keep display columns as strings to avoid mixed int/str Arrow serialization issues.
+    original_avg_perms = metrics.get('original_avg_perms_per_role', 0)
+    hardened_avg_perms = metrics.get('hardened_avg_perms_per_role', 0)
     
     metrics_comparison = pd.DataFrame({
         "Metric": [
@@ -66,19 +70,19 @@ def render():
             "Avg Permissions/Role"
         ],
         "Original": [
-            metrics.get("original_edges", 0),
-            metrics.get("original_risky_exposures", 0),
-            f"{metrics.get('original_avg_perms_per_role', 0):.2f}"
+            str(metrics.get("original_edges", 0)),
+            str(metrics.get("original_risky_exposures", 0)),
+            f"{float(original_avg_perms):.2f}"
         ],
         "Hardened": [
-            metrics.get("hardened_edges", 0),
-            metrics.get("hardened_risky_exposures", 0),
-            f"{metrics.get('hardened_avg_perms_per_role', 0):.2f}"
+            str(metrics.get("hardened_edges", 0)),
+            str(metrics.get("hardened_risky_exposures", 0)),
+            f"{float(hardened_avg_perms):.2f}"
         ],
         "Improvement": [
             f"-{edges_removed}",
             f"-{exposures_reduced}",
-            f"-{metrics.get('original_avg_perms_per_role', 0) - metrics.get('hardened_avg_perms_per_role', 0):.2f}"
+            f"-{float(original_avg_perms) - float(hardened_avg_perms):.2f}"
         ]
     })
     
