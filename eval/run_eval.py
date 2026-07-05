@@ -24,7 +24,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 import pandas as pd  # noqa: E402
 
 from eval.metrics import score  # noqa: E402
-from eval.methods import HeuristicMethod, RandomMethod  # noqa: E402
+from eval.methods import CounterfactualMethod, HeuristicMethod, RandomMethod  # noqa: E402
 from eval.tenant_gen import DENSITY_PRESETS, generate_tenant  # noqa: E402
 
 DEFAULT_CHAIN_LENGTHS = [2, 3, 4, 5]
@@ -46,6 +46,7 @@ def run_grid(chain_lengths: List[int], densities: List[str], seeds: List[int],
     quality from how much each method is allowed to touch.
     """
     heuristic = HeuristicMethod()
+    counterfactual = CounterfactualMethod()
     random_method = RandomMethod(seed=random_seed)
 
     rows: List[Dict] = []
@@ -62,7 +63,13 @@ def run_grid(chain_lengths: List[int], densities: List[str], seeds: List[int],
                 rows.append(_row("heuristic", chain_length, density, seed,
                                  tenant.tenant_id, heur_metrics))
 
-                # Budget-matched random baseline.
+                cf_out = counterfactual.run(tenant.graph)
+                cf_metrics = score(tenant, cf_out)
+                rows.append(_row("counterfactual", chain_length, density, seed,
+                                 tenant.tenant_id, cf_metrics))
+
+                # Random baseline, budget-matched to the heuristic so the
+                # comparison isolates targeting quality from spend.
                 budgets = {
                     "risky": len(heur_out.predicted_risky_perms),
                     "edges": len(heur_out.removed_edges),

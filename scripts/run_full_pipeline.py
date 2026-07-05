@@ -4,7 +4,7 @@ Complete Red vs Blue AI Orchestration Script
 This integrates:
 1. Graph building (Person A)
 2. Red AI attack simulation (Person B)
-3. Blue AI defense + Causal Risk Analysis (Person C)
+3. Blue AI defense + Counterfactual Risk Analysis (Person C)
 """
 
 import os
@@ -18,7 +18,7 @@ try:
     from src.graph.builder import IAMGraphBuilder
     from src.adversarial.red_agent import RedAgent
     from src.adversarial.blue_agent import BlueAgent
-    from src.causal.risk_scorer import CausalRiskScorer
+    from src.causal.risk_scorer import CounterfactualRiskScorer
 
 except ImportError as e:
     print(f"Import error: {e}")
@@ -114,10 +114,10 @@ def orchestrate_full_pipeline():
         print(f"  - Least privilege improvement: +{metrics['least_privilege_improvement']}%")
         
         # ===== PHASE 6: CAUSAL RISK ANALYSIS (ORIGINAL) =====
-        print("\n[PHASE 6] Causal Risk Analysis - ORIGINAL Graph...")
+        print("\n[PHASE 6] Counterfactual Risk Analysis - ORIGINAL Graph...")
         print("-" * 80)
-        
-        original_scorer = CausalRiskScorer(graph)
+
+        original_scorer = CounterfactualRiskScorer(graph)
         original_risk = original_scorer.generate_risk_report()
         
         print(f"Risk Distribution:")
@@ -129,10 +129,10 @@ def orchestrate_full_pipeline():
             print(f"  - {item['action']}: {item['risk_level']} ({item['risk_score']}/10)")
         
         # ===== PHASE 7: CAUSAL RISK ANALYSIS (HARDENED) =====
-        print("\n[PHASE 7] Causal Risk Analysis - HARDENED Graph...")
+        print("\n[PHASE 7] Counterfactual Risk Analysis - HARDENED Graph...")
         print("-" * 80)
-        
-        hardened_scorer = CausalRiskScorer(hardened_graph)
+
+        hardened_scorer = CounterfactualRiskScorer(hardened_graph)
         hardened_risk = hardened_scorer.generate_risk_report()
         
         print(f"Risk Distribution:")
