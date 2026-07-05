@@ -42,12 +42,8 @@ def orchestrate_full_pipeline():
         print("\n[PHASE 1] Loading IAM Graph...")
         print("-" * 80)
         
-        builder = IAMGraphBuilder(
-            uri=os.getenv("NEO4J_URI", "bolt://localhost:7687"),
-            user=os.getenv("NEO4J_USER", "neo4j"),
-            password=os.getenv("NEO4J_PASSWORD", "changeme"),
-        )
-        
+        builder = IAMGraphBuilder.from_env()
+
         graph = builder.get_networkx_graph()
         stats = builder.get_graph_stats()
         

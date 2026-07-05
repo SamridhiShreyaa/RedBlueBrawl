@@ -27,11 +27,7 @@ def main():
 
     builder = None
     try:
-        builder = IAMGraphBuilder(
-            uri=os.getenv("NEO4J_URI", "bolt://localhost:7687"),
-            user=os.getenv("NEO4J_USER", "neo4j"),
-            password=os.getenv("NEO4J_PASSWORD", "changeme"),
-        )
+        builder = IAMGraphBuilder.from_env()
         remote = builder.get_loaded_dataset_metadata()
     except Exception as exc:
         print(f"Dataset check failed while connecting to Neo4j: {exc}")

@@ -1,0 +1,28 @@
+# One-command Neo4j for local development:
+#   docker compose up -d
+#
+# Credentials and ports come from the same environment variables the app uses
+# (see src/config.py and .env.example), defaulting to neo4j/changeme on the
+# standard Bolt (7687) and HTTP browser (7474) ports.
+
+services:
+  neo4j:
+    image: neo4j:5.22-community
+    container_name: redbluebrawl-neo4j
+    ports:
+      - "7474:7474"   # HTTP browser UI
+      - "7687:7687"   # Bolt protocol (driver connections)
+    environment:
+      # NEO4J_AUTH format is "user/password". Password must be >= 8 chars.
+      NEO4J_AUTH: "${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD:-changeme}"
+    volumes:
+      - neo4j_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "cypher-shell -u ${NEO4J_USER:-neo4j} -p ${NEO4J_PASSWORD:-changeme} 'RETURN 1' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 20s
+
+volumes:
+  neo4j_data:
