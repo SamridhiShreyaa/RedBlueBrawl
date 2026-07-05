@@ -7,11 +7,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 try:
     from src.graph.builder import IAMGraphBuilder
 
-    builder = IAMGraphBuilder(
-        uri=os.getenv("NEO4J_URI", "neo4j://127.0.0.1:7687"),
-        user=os.getenv("NEO4J_USER", "neo4j"),
-        password=os.getenv("NEO4J_PASSWORD", "changeme"),
-    )
+    builder = IAMGraphBuilder.from_env()
     dataset_path = os.getenv("IAM_DATASET_PATH", "data/iam_dataset.json")
     builder.clear_all()
     builder.load_data(dataset_path)

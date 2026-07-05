@@ -9,11 +9,7 @@ from src.adversarial.red_agent import RedAgent
 try:
     from src.graph.builder import IAMGraphBuilder
 
-    builder = IAMGraphBuilder(
-        uri=os.getenv("NEO4J_URI", "bolt://localhost:7687"),
-        user=os.getenv("NEO4J_USER", "neo4j"),
-        password=os.getenv("NEO4J_PASSWORD", "changeme"),
-    )
+    builder = IAMGraphBuilder.from_env()
 
     graph = builder.get_networkx_graph()
     red = RedAgent(graph)

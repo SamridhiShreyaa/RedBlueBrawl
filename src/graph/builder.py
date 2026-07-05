@@ -1,10 +1,23 @@
 import json
 from neo4j import GraphDatabase
 
+from src.config import Neo4jConfig, get_config
+
 
 class IAMGraphBuilder:
     def __init__(self, uri, user, password):
         self.driver = GraphDatabase.driver(uri, auth=(user, password))
+
+    @classmethod
+    def from_config(cls, config: Neo4jConfig = None):
+        """Construct a builder from central config (env-driven by default)."""
+        cfg = config or get_config()
+        return cls(cfg.uri, cfg.user, cfg.password)
+
+    @classmethod
+    def from_env(cls):
+        """Convenience alias: build from environment-derived config."""
+        return cls.from_config()
 
     def close(self):
         self.driver.close()
