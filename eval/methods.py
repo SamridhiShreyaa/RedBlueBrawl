@@ -5,13 +5,18 @@ Every method takes an IAM graph and returns a :class:`MethodOutput`:
     * ``predicted_risky_perms`` -- permission node ids the method calls risky.
     * ``removed_edges`` / ``removed_nodes`` -- what its remediation strips out.
 
-Two methods are provided:
+Methods:
 
-    * :class:`HeuristicMethod` -- the project's actual pipeline (RedAgent +
-      BlueAgent + CausalRiskScorer). This is the baseline we want to beat.
-    * :class:`RandomMethod` -- flags/cuts uniformly at random. To make the
-      comparison about *targeting quality* rather than budget, run_eval feeds
-      it the heuristic's counts so both spend the same number of flags/cuts.
+    * :class:`HeuristicMethod` -- the project's original pipeline: the legacy
+      weighted-sum scorer (HeuristicRiskScorer) for detection, RedAgent +
+      BlueAgent for remediation. This is the baseline to beat.
+    * :class:`CounterfactualMethod` -- identical attack discovery and
+      remediation, but detection comes from the counterfactual attack-path
+      scorer (CounterfactualRiskScorer). Because remediation is shared with the
+      heuristic, its path-break rate is identical by construction -- so any
+      difference in the table is attributable to the scorer alone.
+    * :class:`RandomMethod` -- uniform random with a budget matched to the
+      heuristic, isolating targeting quality from spend.
 """
 
 from __future__ import annotations
@@ -24,7 +29,11 @@ import networkx as nx
 
 from src.adversarial.blue_agent import BlueAgent
 from src.adversarial.red_agent import RedAgent
-from src.causal.risk_scorer import CausalRiskScorer, RiskLevel
+from src.causal.risk_scorer import (
+    CounterfactualRiskScorer,
+    HeuristicRiskScorer,
+    RiskLevel,
+)
 
 Edge = Tuple[str, str]
 
@@ -41,46 +50,68 @@ def _permission_nodes(graph: nx.DiGraph) -> List[str]:
 
 
 def _removable_edges(graph: nx.DiGraph) -> List[Edge]:
-    """HAS_ROLE and GRANTS edges -- the edges remediation could plausibly cut."""
     return [(u, v) for u, v in graph.edges()]
 
 
+def _discover_and_remediate(graph: nx.DiGraph):
+    """Shared RedAgent attack discovery + BlueAgent remediation.
+
+    Returns ``(attack_paths, removed_edges, removed_nodes)``. Deterministic for
+    a given graph, so any method using this has an identical path-break rate.
+    """
+    red = RedAgent(graph)
+    attack_paths = red.find_escalation_paths(max_paths=50)
+
+    blue = BlueAgent(graph)  # copies the graph internally
+    strategy = blue.generate_defenses(attack_paths)
+    hardened, _ = blue.apply_defenses(strategy)
+
+    removed_edges = set(graph.edges()) - set(hardened.edges())
+    removed_nodes = set(graph.nodes()) - set(hardened.nodes())
+    return attack_paths, removed_edges, removed_nodes
+
+
+def _risky_from_scorer(scorer) -> Set[str]:
+    return {
+        s.permission_id for s in scorer.score_all_permissions()
+        if s.risk_level in (RiskLevel.CRITICAL, RiskLevel.HIGH)
+    }
+
+
 class HeuristicMethod:
-    """The current if/else pipeline: RedAgent -> BlueAgent, plus the scorer."""
+    """Legacy weighted-sum detection + RedAgent/BlueAgent remediation (baseline)."""
 
     name = "heuristic"
 
     def run(self, graph: nx.DiGraph, budgets: Optional[Dict[str, int]] = None) -> MethodOutput:
-        # --- detection: which permissions does the project call risky? ------
-        scorer = CausalRiskScorer(graph)
-        scores = scorer.score_all_permissions()
-        predicted_risky: Set[str] = {
-            s.permission_id for s in scores
-            if s.risk_level in (RiskLevel.CRITICAL, RiskLevel.HIGH)
-        }
-
-        # --- attack discovery + remediation ---------------------------------
-        red = RedAgent(graph)
-        attack_paths = red.find_escalation_paths(max_paths=50)
-
-        # Permissions the attacker actually leaned on count as "risky" too.
+        predicted = _risky_from_scorer(HeuristicRiskScorer(graph))
+        attack_paths, removed_edges, removed_nodes = _discover_and_remediate(graph)
         for attack in attack_paths:
-            predicted_risky.update(attack.permissions_used)
-
-        blue = BlueAgent(graph)  # copies the graph internally
-        strategy = blue.generate_defenses(attack_paths)
-        hardened, _ = blue.apply_defenses(strategy)
-
-        original_edges = set(graph.edges())
-        hardened_edges = set(hardened.edges())
-        removed_edges = original_edges - hardened_edges
-
-        original_nodes = set(graph.nodes())
-        hardened_nodes = set(hardened.nodes())
-        removed_nodes = original_nodes - hardened_nodes
-
+            predicted.update(attack.permissions_used)
         return MethodOutput(
-            predicted_risky_perms=predicted_risky,
+            predicted_risky_perms=predicted,
+            removed_edges=removed_edges,
+            removed_nodes=removed_nodes,
+        )
+
+
+class CounterfactualMethod:
+    """Counterfactual attack-path detection + the SAME remediation as heuristic.
+
+    Only the scorer differs from :class:`HeuristicMethod`, so the path-break
+    column is identical by construction and the detection metrics isolate the
+    scorer's contribution.
+    """
+
+    name = "counterfactual"
+
+    def run(self, graph: nx.DiGraph, budgets: Optional[Dict[str, int]] = None) -> MethodOutput:
+        predicted = _risky_from_scorer(CounterfactualRiskScorer(graph))
+        attack_paths, removed_edges, removed_nodes = _discover_and_remediate(graph)
+        for attack in attack_paths:
+            predicted.update(attack.permissions_used)
+        return MethodOutput(
+            predicted_risky_perms=predicted,
             removed_edges=removed_edges,
             removed_nodes=removed_nodes,
         )
@@ -124,4 +155,4 @@ class RandomMethod:
 
 def default_methods(random_seed: int = 0) -> List[object]:
     """The method roster run_eval evaluates, in table order."""
-    return [HeuristicMethod(), RandomMethod(seed=random_seed)]
+    return [HeuristicMethod(), CounterfactualMethod(), RandomMethod(seed=random_seed)]

@@ -180,13 +180,29 @@ def test_run_grid_smoke_and_outputs(tmp_path):
         chain_lengths=[2, 3], densities=["low"], seeds=[0, 1], n_chains=2,
     )
 
-    # Two methods x 2 lengths x 1 density x 2 seeds = 8 rows.
-    assert len(df) == 8
-    assert set(df["method"].unique()) == {"heuristic", "random"}
+    # Three methods x 2 lengths x 1 density x 2 seeds = 12 rows.
+    assert len(df) == 12
+    assert set(df["method"].unique()) == {"heuristic", "counterfactual", "random"}
     for col in ("precision", "recall", "f1", "fpr", "pct_paths_broken", "benign_edges_cut"):
         assert col in df.columns
 
     summaries = run_eval.write_outputs(df, str(tmp_path))
-    assert set(summaries["by_method"]["method"]) == {"heuristic", "random"}
+    assert set(summaries["by_method"]["method"]) == {"heuristic", "counterfactual", "random"}
     for name in ("raw_results.csv", "summary.csv", "summary_by_method.csv"):
         assert (tmp_path / name).exists()
+
+
+def test_counterfactual_beats_heuristic_on_detection_without_regressing_breaks():
+    df = run_eval.run_grid(
+        chain_lengths=[2, 3, 4], densities=["low", "high"], seeds=[0, 1, 2], n_chains=3,
+    )
+    by_method = df.groupby("method")[["f1", "pct_paths_broken"]].mean()
+
+    heur_f1 = by_method.loc["heuristic", "f1"]
+    cf_f1 = by_method.loc["counterfactual", "f1"]
+    assert cf_f1 > heur_f1, f"counterfactual F1 {cf_f1} must beat heuristic {heur_f1}"
+
+    # Shared remediation => identical path-break rate (no regression).
+    heur_break = by_method.loc["heuristic", "pct_paths_broken"]
+    cf_break = by_method.loc["counterfactual", "pct_paths_broken"]
+    assert cf_break >= heur_break

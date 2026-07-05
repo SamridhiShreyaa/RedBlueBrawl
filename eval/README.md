@@ -19,7 +19,13 @@ truth is known because we planted it.
 
 2. **`methods.py`** runs each method on the graph and returns which permissions it
    flags and which edges/nodes its remediation removes:
-   - `HeuristicMethod` — the project pipeline (RedAgent + BlueAgent + CausalRiskScorer).
+   - `HeuristicMethod` — the legacy weighted-sum scorer (`HeuristicRiskScorer`) for
+     detection, RedAgent + BlueAgent for remediation. The baseline.
+   - `CounterfactualMethod` — the same attack discovery and remediation, but detection
+     comes from `CounterfactualRiskScorer` (scores each permission by how many reachable
+     escalation routes removing it would break). Because remediation is shared with the
+     heuristic, its path-break rate is identical by construction, so the detection
+     numbers isolate the scorer.
    - `RandomMethod` — uniform random, given the heuristic's **matched budget** so the
      comparison is about targeting quality, not how much each method is allowed to cut.
 
@@ -41,11 +47,29 @@ and `comparison.png`.
 
 ## Reading the committed results
 
-The heuristic breaks **100%** of planted paths (BlueAgent reliably cuts the
-assume-role edge) but has **low detection F1** that *falls as chains get longer*
-and precision that *falls as distractor density rises* — its hardcoded risk
-baseline misses techniques like `iam:CreatePolicyVersion` and over-flags merely
-destructive permissions. The budget-matched random baseline breaks far fewer
-paths (~38%), confirming the heuristic's remediation targeting beats chance even
-where its labeling is weak. This gap is the harness's headline finding and the
-motivation for a learned detector/remediator.
+Headline table (mean over the full grid, `summary_by_method.csv`):
+
+| method          | precision | recall |   f1   |  fpr  | pct_paths_broken | benign_edges_cut |
+| --------------- | :-------: | :----: | :----: | :---: | :--------------: | :--------------: |
+| counterfactual  |   1.000   | 1.000  | 1.000  | 0.000 |      100.0       |      16.67       |
+| heuristic       |   0.166   | 0.095  | 0.106  | 0.220 |      100.0       |      16.67       |
+| random          |   0.223   | 0.141  | 0.149  | 0.203 |       37.8       |      19.07       |
+
+**Heuristic (baseline).** Breaks **100%** of planted paths (BlueAgent reliably cuts the
+assume-role edge) but detection F1 is **~0.11** and *falls as chains get longer* and as
+distractor density rises — its hardcoded weighted-sum conflates "sensitive" with
+"exploitable", missing techniques like `iam:CreatePolicyVersion` while over-flagging
+merely destructive permissions (`s3:DeleteObject`, `kms:Decrypt`).
+
+**Counterfactual (new).** Detection **F1 = 1.0 in every single config**, with the path-break
+rate unchanged at 100% (remediation is shared with the heuristic). It flags a permission
+only when removing its grant actually breaks a reachable escalation route, so it recovers
+exactly the planted escalation permissions and ignores destructive-but-non-escalating ones.
+
+**Honest caveat on the perfect score.** F1 = 1.0 is real on *this* benchmark, not
+inflated — but it reflects how the generator defines ground truth: risky permissions are
+exactly those on planted escalation chains, i.e. the escalation-reachable ones. A correct
+reachability-based counterfactual therefore *should* recover them perfectly here. The
+result proves the counterfactual model is correct and decisively beats the sensitivity
+heuristic; it does **not** imply 1.0 detection on messy real-world IAM data, where ground
+truth is noisier and escalation reachability is harder to enumerate.

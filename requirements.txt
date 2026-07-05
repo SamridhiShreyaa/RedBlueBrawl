@@ -12,7 +12,6 @@ pydantic
 structlog
 python-dotenv
 faker
-dowhy
 node2vec
 torch
 stable-baselines3

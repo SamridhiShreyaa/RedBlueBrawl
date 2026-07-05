@@ -32,6 +32,9 @@ Our system:
 * IAM relationship graph modeling
 * Role mining using graph algorithms
 * Detection of excessive privileges
+* **Counterfactual attack-path risk scoring** — permissions are ranked by how many
+  reachable privilege-escalation routes their removal would break (`do(grant = removed)`,
+  computed as deterministic graph recomputation, not a probabilistic causal model)
 * Self-healing permission recommendations
 * Visual role-access insights
 

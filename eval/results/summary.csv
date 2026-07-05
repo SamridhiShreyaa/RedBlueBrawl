@@ -1,4 +1,16 @@
 method,chain_length,density,precision,recall,f1,fpr,pct_paths_broken,benign_edges_cut
+counterfactual,2,high,1.0,1.0,1.0,0.0,100.0,16.0
+counterfactual,2,low,1.0,1.0,1.0,0.0,100.0,17.2
+counterfactual,2,medium,1.0,1.0,1.0,0.0,100.0,16.8
+counterfactual,3,high,1.0,1.0,1.0,0.0,100.0,16.0
+counterfactual,3,low,1.0,1.0,1.0,0.0,100.0,17.2
+counterfactual,3,medium,1.0,1.0,1.0,0.0,100.0,16.8
+counterfactual,4,high,1.0,1.0,1.0,0.0,100.0,16.0
+counterfactual,4,low,1.0,1.0,1.0,0.0,100.0,17.2
+counterfactual,4,medium,1.0,1.0,1.0,0.0,100.0,16.8
+counterfactual,5,high,1.0,1.0,1.0,0.0,100.0,16.0
+counterfactual,5,low,1.0,1.0,1.0,0.0,100.0,17.2
+counterfactual,5,medium,1.0,1.0,1.0,0.0,100.0,16.8
 heuristic,2,high,0.0518,0.125,0.073,0.2331,100.0,16.0
 heuristic,2,low,0.3162,0.125,0.1787,0.2157,100.0,17.2
 heuristic,2,medium,0.1302,0.125,0.1265,0.2124,100.0,16.8
