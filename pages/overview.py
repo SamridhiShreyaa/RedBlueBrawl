@@ -53,12 +53,7 @@ def render():
         st.write("**Neo4j Status:**")
         try:
             from src.graph.builder import IAMGraphBuilder
-            import os
-            builder = IAMGraphBuilder(
-                uri=os.getenv("NEO4J_URI", "bolt://localhost:7687"),
-                user=os.getenv("NEO4J_USER", "neo4j"),
-                password=os.getenv("NEO4J_PASSWORD", "changeme"),
-            )
+            builder = IAMGraphBuilder.from_env()
             stats = builder.get_graph_stats()
             builder.close()
             st.write(f"- ✅ Connected")
