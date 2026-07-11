@@ -882,15 +882,61 @@ class HeuristicRiskScorer:
         return recommendations
 
 
+# ---- scorer selection ----------------------------------------------------
+
+SCORER_CLASSES = {
+    "signature": SignatureCounterfactualScorer,
+    "reachability": ReachabilityRiskScorer,
+}
+
+
+def make_risk_scorer(graph: nx.DiGraph, method: str = None):
+    """Construct the configured risk scorer.
+
+    Args:
+        graph: the IAM graph to score.
+        method: ``"signature"`` or ``"reachability"``. If ``None`` (the usual
+            case), it is read from ``RISK_SCORER_METHOD`` via ``src.config``,
+            defaulting to ``"signature"`` -- so existing call sites are
+            unchanged in behaviour on the trust-less Neo4j dataset.
+
+    Raises:
+        ValueError: if an unknown method is given, or if ``"reachability"`` is
+            requested on a graph that carries no ``trust_edges`` metadata. This
+            is deliberate: a user who opts into reachability on data that cannot
+            support it gets a clear, immediate error instead of a confusing
+            all-zero result.
+    """
+    if method is None:
+        from src.config import get_risk_scorer_method
+        method = get_risk_scorer_method()
+    method = (method or "").strip().lower()
+
+    if method not in SCORER_CLASSES:
+        raise ValueError(
+            f"Unknown risk scorer method {method!r}; "
+            f"expected one of {tuple(SCORER_CLASSES)}"
+        )
+
+    if method == "reachability" and not graph.graph.get("trust_edges"):
+        raise ValueError(
+            "risk scorer method 'reachability' requires trust-edge data on the "
+            "graph (graph.graph['trust_edges']), but none was found. The current "
+            "synthetic Neo4j dataset exposes only action names and has no trust / "
+            "AssumeRolePolicy structure, so reachability cannot score it. Use "
+            "'signature' until trust-policy ingestion (Feature 9) is available."
+        )
+
+    return SCORER_CLASSES[method](graph)
+
+
 # ---- aliases -------------------------------------------------------------
 # Back-compat: the class was introduced as CounterfactualRiskScorer, then split
 # into a signature-gated version and a reachability version. Existing imports of
 # CounterfactualRiskScorer keep resolving to the signature-gated scorer.
 CounterfactualRiskScorer = SignatureCounterfactualScorer
 
-# Production default. The synthetic Neo4j dataset carries no trust-edge
-# structure, so ReachabilityRiskScorer would find no routes there; the
-# signature scorer remains the safe default for graphs that expose only action
-# names. ReachabilityRiskScorer is the *recommended* scorer wherever trust /
-# AssumeRolePolicy structure is available (see its docstring and the eval).
+# Back-compat alias for the concrete signature scorer. Prefer make_risk_scorer()
+# for the configurable, env-driven selection; this name is retained so existing
+# imports keep working and resolves to the current default scorer class.
 CausalRiskScorer = SignatureCounterfactualScorer

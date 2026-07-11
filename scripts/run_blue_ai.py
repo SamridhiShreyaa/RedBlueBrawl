@@ -16,7 +16,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from src.adversarial.red_agent import RedAgent
 from src.adversarial.blue_agent import BlueAgent
-from src.causal.risk_scorer import CausalRiskScorer
+from src.causal.risk_scorer import make_risk_scorer
 
 
 def run_blue_ai_pipeline(graph, attack_paths, output_file="defenses.json"):
@@ -66,7 +66,7 @@ def run_blue_ai_pipeline(graph, attack_paths, output_file="defenses.json"):
 
     # ===== STEP 4: RUN CAUSAL RISK ANALYSIS (ORIGINAL GRAPH) =====
     print("\n[4] Running Causal Risk Analysis on ORIGINAL graph...")
-    original_scorer = CausalRiskScorer(graph)
+    original_scorer = make_risk_scorer(graph)
     original_risk_report = original_scorer.generate_risk_report()
     
     print(f"    Original Risk Profile:")
@@ -75,7 +75,7 @@ def run_blue_ai_pipeline(graph, attack_paths, output_file="defenses.json"):
 
     # ===== STEP 5: RUN CAUSAL RISK ANALYSIS (HARDENED GRAPH) =====
     print("\n[5] Running Causal Risk Analysis on HARDENED graph...")
-    hardened_scorer = CausalRiskScorer(hardened_graph)
+    hardened_scorer = make_risk_scorer(hardened_graph)
     hardened_risk_report = hardened_scorer.generate_risk_report()
     
     print(f"    Hardened Risk Profile:")

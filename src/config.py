@@ -70,3 +70,25 @@ def get_driver(config: Optional[Neo4jConfig] = None):
 
     cfg = config or get_config()
     return GraphDatabase.driver(cfg.uri, auth=cfg.auth)
+
+
+# ---- risk scorer selection -----------------------------------------------
+# Which risk scorer the generic pipeline uses. "signature" is the default and
+# preserves current behaviour on the synthetic Neo4j dataset (which carries no
+# trust-edge structure). "reachability" opts into the structural scorer and
+# requires trust-edge data on the graph. This flips to "reachability" as the
+# recommended default once real IAM ingestion with trust-policy data lands
+# (Feature 9) -- a config change, not a re-architecture.
+DEFAULT_RISK_SCORER_METHOD = "signature"
+VALID_RISK_SCORER_METHODS = ("signature", "reachability")
+
+
+def get_risk_scorer_method() -> str:
+    """Active risk-scorer method from ``RISK_SCORER_METHOD`` (default 'signature')."""
+    method = os.getenv("RISK_SCORER_METHOD", DEFAULT_RISK_SCORER_METHOD).strip().lower()
+    if method not in VALID_RISK_SCORER_METHODS:
+        raise ValueError(
+            f"RISK_SCORER_METHOD must be one of {VALID_RISK_SCORER_METHODS}, "
+            f"got {method!r}"
+        )
+    return method

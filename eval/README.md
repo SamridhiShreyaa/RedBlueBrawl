@@ -106,3 +106,13 @@ overlap, and the 1.0 immediately becomes 0.17.
 That is not a detection failure — it is because RedAgent/BlueAgent *also* recognise pivots
 by `sts:AssumeRole`, so the remediation layer has the very same signature blind spot. Making
 remediation reachability-driven is the natural follow-up; this feature fixes detection.
+
+## Which scorer runs in production
+
+The eval methods construct their scorers directly (that is the whole point — to compare
+them). The **pipeline** instead selects one through `make_risk_scorer(graph)`, driven by the
+`RISK_SCORER_METHOD` env var (`signature` default, `reachability` opt-in — see the main
+README). Reachability requires trust-edge data and fails loudly without it. It becomes the
+recommended default once real IAM ingestion with trust-policy data lands (Feature 9): a
+config change, not a re-architecture, precisely because this eval already shows it
+generalises where the signature scorer does not.
