@@ -34,7 +34,11 @@ Our system:
 * Detection of excessive privileges
 * **Counterfactual attack-path risk scoring** — permissions are ranked by how many
   reachable privilege-escalation routes their removal would break (`do(grant = removed)`,
-  computed as deterministic graph recomputation, not a probabilistic causal model)
+  computed as deterministic graph recomputation, not a probabilistic causal model). Two
+  scorers: a signature-gated baseline, and a **structural-reachability scorer**
+  (`ReachabilityRiskScorer`, recommended) that follows real role→role trust edges to
+  sensitive targets and so generalises to escalation techniques whose action names appear
+  in no hardcoded list (see `eval/` for the novel-technique generalization benchmark)
 * Self-healing permission recommendations
 * Visual role-access insights
 

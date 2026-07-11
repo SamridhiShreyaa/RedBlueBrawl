@@ -210,8 +210,16 @@ def count_attack_paths(graph: nx.DiGraph) -> int:
 # Counterfactual scorer
 # ==========================================================================
 
-class CounterfactualRiskScorer:
-    """Scores permissions by the escalation routes their removal would break."""
+class SignatureCounterfactualScorer:
+    """Signature-gated counterfactual scorer (labeled baseline).
+
+    Identifies pivots/targets by action-name membership in ``ASSUME_ACTIONS`` /
+    ``PRIVESC_ACTIONS`` and Cartesian-joins every pivot to every target. This is
+    correct and fast, but its route model is gated on a hardcoded action
+    vocabulary, so it is structurally blind to escalation techniques whose
+    action strings are not in those sets (see the novel-technique benchmark).
+    :class:`ReachabilityRiskScorer` removes that dependence.
+    """
 
     def __init__(self, graph: nx.DiGraph):
         self.graph = graph
@@ -376,6 +384,272 @@ class CounterfactualRiskScorer:
         recs.append(
             "Apply Blue AI defenses to cut the highest-counterfactual grants first."
         )
+        return recs
+
+
+# ==========================================================================
+# Structural reachability route model + counterfactual core
+# ==========================================================================
+#
+# Where the signature scorer identifies escalation by matching action names,
+# the reachability model follows *structure*:
+#
+#   * role->role reachability comes from explicit trust edges carried on
+#     ``graph.graph["trust_edges"]`` -- each edge names the permission grant
+#     that enables it, so the enabler is attributed structurally, not by name;
+#   * a "sensitive target" is any permission flagged ``is_sensitive`` (a data
+#     attribute shared by benign destructive perms too, so it does not leak
+#     which perms are escalation techniques);
+#   * an escalation route is a real traversed path
+#         user -HAS_ROLE-> role -(trust)+-> target_role -GRANTS-> sensitive_perm
+#     that crosses at least one trust edge (i.e. the user had to *assume* into
+#     something to reach the sensitive target). Direct sensitive access with no
+#     assumption is baseline privilege, not escalation, so it is excluded --
+#     which is exactly why directly-held destructive distractors don't score.
+#
+# No action-name list is consulted anywhere below. A novel escalation action is
+# caught iff its grant enables a trust edge on a path to a sensitive target.
+
+
+def _trust_edges(graph: nx.DiGraph) -> List[dict]:
+    return list(graph.graph.get("trust_edges", []))
+
+
+def enumerate_reachability_routes(
+    graph: nx.DiGraph, trust_edges: List[dict] = None
+) -> Tuple[Dict[Edge, int], int]:
+    """Enumerate real user->...->sensitive-target paths over trust edges.
+
+    Returns ``(edge_credit, total_routes)`` where ``edge_credit[e]`` counts the
+    routes traversing grant edge ``e``. A route credits: the user's HAS_ROLE
+    edge, every enabling-permission grant of the trust edges on the path, and
+    the terminal GRANTS edge into the sensitive target. As with the signature
+    model, per-edge participation equals the counterfactual
+    ``|routes(G)| - |routes(G - e)|`` because removing a grant deletes exactly
+    the routes that depend on it (verified against recomputation in tests).
+    """
+    if trust_edges is None:
+        trust_edges = _trust_edges(graph)
+
+    # role -> list of (dst_role, enabling_grant_edge). A trust edge is only
+    # active if its enabling permission is actually granted by the source role;
+    # removing that GRANTS edge severs the trust edge (this is what makes the
+    # enabling permission's counterfactual equal to real edge removal).
+    trust_adj: Dict[str, List[Tuple[str, Edge]]] = defaultdict(list)
+    for te in trust_edges:
+        src, enabling_perm = te["src"], te["enabling_perm"]
+        if graph.has_edge(src, enabling_perm):
+            trust_adj[src].append((te["dst"], (src, enabling_perm)))
+
+    def sensitive_perms(role: str) -> List[str]:
+        return [
+            p for p in graph.successors(role)
+            if graph.nodes[p].get("label") == "Permission"
+            and graph.nodes[p].get("is_sensitive", False)
+        ]
+
+    edge_credit: Dict[Edge, int] = defaultdict(int)
+    total = 0
+
+    users = _nodes_with_label(graph, "User")
+    for user in users:
+        held_roles = _user_roles(graph, user)
+        for start_role in held_roles:
+            # DFS over trust edges from the directly-held start role. Each state
+            # carries the enabling grants used so far and the visited role set
+            # (simple paths only). A role reached with >=1 trust hop is an
+            # escalation landing spot; credit its sensitive perms there.
+            stack: List[Tuple[str, List[Edge], set]] = [(start_role, [], {start_role})]
+            while stack:
+                role, enabling_grants, visited = stack.pop()
+                if enabling_grants:  # reached via >= 1 assume hop -> escalation
+                    for target_perm in sensitive_perms(role):
+                        total += 1
+                        edge_credit[(user, start_role)] += 1
+                        for grant in enabling_grants:
+                            edge_credit[grant] += 1
+                        edge_credit[(role, target_perm)] += 1
+                for dst, enabling_grant in trust_adj.get(role, []):
+                    if dst in visited:
+                        continue
+                    stack.append((
+                        dst,
+                        enabling_grants + [enabling_grant],
+                        visited | {dst},
+                    ))
+
+    return dict(edge_credit), total
+
+
+def count_reachability_paths(
+    graph: nx.DiGraph, trust_edges: List[dict] = None
+) -> int:
+    """Total reachable escalation routes; recomputed from scratch for tests."""
+    return enumerate_reachability_routes(graph, trust_edges)[1]
+
+
+class ReachabilityRiskScorer:
+    """Scores permissions by counterfactual escalation-route breaking, using
+    real graph reachability over trust edges rather than action-name signatures.
+
+    Recommended default wherever the graph carries assume/trust structure
+    (``graph.graph["trust_edges"]``). It generalises to novel escalation actions
+    because nothing here inspects an action string. On a graph with no trust
+    edges it reports no routes (there is no reachability to reason about); use
+    :class:`SignatureCounterfactualScorer` as the fallback in that case.
+    """
+
+    def __init__(self, graph: nx.DiGraph):
+        self.graph = graph
+        self.trust_edges = _trust_edges(graph)
+        self.edge_credit, self.total_routes = enumerate_reachability_routes(
+            graph, self.trust_edges
+        )
+        # Graph-derived importance signal (structural, not name-based): how
+        # central each node is in the access graph. Used only to weight ordering
+        # among routed permissions, never to decide membership.
+        self._pagerank = self._safe_pagerank()
+
+    def _safe_pagerank(self) -> Dict[str, float]:
+        try:
+            return nx.pagerank(self.graph, max_iter=100)
+        except Exception:
+            return {}
+
+    def routes_broken_by_removing_grant(self, role_id: str, perm_id: str) -> int:
+        return self.edge_credit.get((role_id, perm_id), 0)
+
+    def _permission_routes(self, permission_id: str) -> int:
+        total = 0
+        for role in self.graph.predecessors(permission_id):
+            if self.graph.nodes[role].get("label") == "Role":
+                total += self.edge_credit.get((role, permission_id), 0)
+        return total
+
+    def _count_user_exposures(self, permission_id: str) -> int:
+        count = 0
+        for role in self.graph.predecessors(permission_id):
+            if self.graph.nodes[role].get("label") != "Role":
+                continue
+            count += sum(
+                1 for u in self.graph.predecessors(role)
+                if self.graph.nodes[u].get("label") == "User"
+            )
+        return count
+
+    def _max_permission_routes(self) -> int:
+        best = 0
+        for perm in _nodes_with_label(self.graph, "Permission"):
+            best = max(best, self._permission_routes(perm))
+        return best
+
+    def score_permission_risk(self, permission_id: str) -> PermissionRiskScore:
+        if not self.graph.has_node(permission_id):
+            raise ValueError(f"Permission {permission_id} not found in graph")
+
+        node = self.graph.nodes[permission_id]
+        action = node.get("action", "unknown")
+        is_sensitive = bool(node.get("is_sensitive", False))
+
+        routes = self._permission_routes(permission_id)
+        max_routes = self._max_permission_routes()
+
+        risk_score = round(10.0 * routes / max_routes, 2) if max_routes else 0.0
+        causal_strength = round(routes / max_routes, 4) if max_routes else 0.0
+        risk_level = self._route_count_to_level(routes, max_routes)
+        exposure = self._count_user_exposures(permission_id)
+
+        return PermissionRiskScore(
+            permission_id=permission_id,
+            action=action,
+            risk_level=risk_level,
+            risk_score=risk_score,
+            causal_strength=causal_strength,
+            exposure_count=exposure,
+            is_sensitive=is_sensitive,
+            justification=self._justify(routes, exposure),
+            routes_broken=routes,
+        )
+
+    def score_all_permissions(self) -> List[PermissionRiskScore]:
+        perms = _nodes_with_label(self.graph, "Permission")
+        scores = [self.score_permission_risk(p) for p in perms]
+        scores.sort(
+            key=lambda s: (s.routes_broken, self._pagerank.get(s.permission_id, 0.0)),
+            reverse=True,
+        )
+        return scores
+
+    def generate_risk_report(self) -> Dict:
+        all_scores = self.score_all_permissions()
+        return {
+            "total_permissions": len(all_scores),
+            "total_attack_routes": self.total_routes,
+            "trust_edges": len(self.trust_edges),
+            "permissions_by_risk_level": self._group_by_risk_level(all_scores),
+            "top_10_riskiest": [
+                {
+                    "action": s.action,
+                    "risk_level": s.risk_level.value,
+                    "risk_score": s.risk_score,
+                    "routes_broken": s.routes_broken,
+                    "exposure_count": s.exposure_count,
+                    "justification": s.justification,
+                }
+                for s in all_scores[:10]
+            ],
+            "causal_attribution": self._attribution(all_scores),
+            "recommendations": self._recommendations(all_scores),
+        }
+
+    @staticmethod
+    def _route_count_to_level(routes: int, max_routes: int) -> RiskLevel:
+        if routes <= 0:
+            return RiskLevel.LOW
+        if max_routes and routes >= 0.5 * max_routes:
+            return RiskLevel.CRITICAL
+        return RiskLevel.HIGH
+
+    @staticmethod
+    def _justify(routes: int, exposure: int) -> str:
+        if routes <= 0:
+            return "not on any reachable escalation route (no assume-path to a sensitive target)"
+        reasons = [f"removing it breaks {routes} reachable escalation route(s)"]
+        if exposure:
+            reasons.append(f"reachable by {exposure} user(s)")
+        return "; ".join(reasons)
+
+    @staticmethod
+    def _group_by_risk_level(scores: List[PermissionRiskScore]) -> Dict:
+        grouped = {level.value: [] for level in RiskLevel}
+        for s in scores:
+            grouped[s.risk_level.value].append(s.action)
+        return {k: v for k, v in grouped.items() if v}
+
+    def _attribution(self, scores: List[PermissionRiskScore]) -> Dict:
+        total = sum(s.routes_broken for s in scores)
+        if total == 0:
+            return {}
+        return {s.action: round(s.routes_broken / total * 100, 1) for s in scores[:5]}
+
+    def _recommendations(self, scores: List[PermissionRiskScore]) -> List[str]:
+        recs: List[str] = []
+        routed = [s for s in scores if s.routes_broken > 0]
+        if routed:
+            top = routed[0]
+            recs.append(
+                f"Removing '{top.action}' would break {top.routes_broken} reachable "
+                f"escalation route(s) -- highest structural counterfactual impact."
+            )
+            recs.append(
+                f"{len(routed)} permission(s) lie on a real assume-path to a "
+                f"sensitive target; prioritise these over merely-sensitive grants."
+            )
+        else:
+            recs.append(
+                "No user can reach a sensitive target via an assume-path; no "
+                "structural escalation risk detected."
+            )
         return recs
 
 
@@ -608,6 +882,15 @@ class HeuristicRiskScorer:
         return recommendations
 
 
-# Backwards-compatible alias. Historically named "causal"; the implementation
-# is now counterfactual attack-path analysis, not a probabilistic SCM.
-CausalRiskScorer = CounterfactualRiskScorer
+# ---- aliases -------------------------------------------------------------
+# Back-compat: the class was introduced as CounterfactualRiskScorer, then split
+# into a signature-gated version and a reachability version. Existing imports of
+# CounterfactualRiskScorer keep resolving to the signature-gated scorer.
+CounterfactualRiskScorer = SignatureCounterfactualScorer
+
+# Production default. The synthetic Neo4j dataset carries no trust-edge
+# structure, so ReachabilityRiskScorer would find no routes there; the
+# signature scorer remains the safe default for graphs that expose only action
+# names. ReachabilityRiskScorer is the *recommended* scorer wherever trust /
+# AssumeRolePolicy structure is available (see its docstring and the eval).
+CausalRiskScorer = SignatureCounterfactualScorer

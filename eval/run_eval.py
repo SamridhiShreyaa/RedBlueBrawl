@@ -24,7 +24,12 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 import pandas as pd  # noqa: E402
 
 from eval.metrics import score  # noqa: E402
-from eval.methods import CounterfactualMethod, HeuristicMethod, RandomMethod  # noqa: E402
+from eval.methods import (  # noqa: E402
+    HeuristicMethod,
+    RandomMethod,
+    ReachabilityMethod,
+    SignatureCounterfactualMethod,
+)
 from eval.tenant_gen import DENSITY_PRESETS, generate_tenant  # noqa: E402
 
 DEFAULT_CHAIN_LENGTHS = [2, 3, 4, 5]
@@ -38,16 +43,23 @@ METRIC_COLUMNS = [
 
 
 def run_grid(chain_lengths: List[int], densities: List[str], seeds: List[int],
-             n_chains: int = 3, random_seed: int = 0) -> pd.DataFrame:
+             n_chains: int = 3, random_seed: int = 0,
+             novel_technique: bool = False) -> pd.DataFrame:
     """Evaluate all methods across the grid. Returns one row per (method, tenant).
+
+    ``novel_technique`` selects the benchmark: the original sts-based chains, or
+    chains that escalate via an action absent from every hardcoded privesc list.
 
     The random baseline is given the heuristic's per-tenant budget (number of
     permissions flagged and edges cut) so the comparison isolates *targeting*
     quality from how much each method is allowed to touch.
     """
     heuristic = HeuristicMethod()
-    counterfactual = CounterfactualMethod()
+    signature_cf = SignatureCounterfactualMethod()
+    reachability_cf = ReachabilityMethod()
     random_method = RandomMethod(seed=random_seed)
+
+    benchmark = "novel" if novel_technique else "original"
 
     rows: List[Dict] = []
     for chain_length in chain_lengths:
@@ -56,17 +68,19 @@ def run_grid(chain_lengths: List[int], densities: List[str], seeds: List[int],
                 tenant = generate_tenant(
                     seed=seed, chain_length=chain_length,
                     density=density, n_chains=n_chains,
+                    novel_technique=novel_technique,
                 )
 
                 heur_out = heuristic.run(tenant.graph)
                 heur_metrics = score(tenant, heur_out)
-                rows.append(_row("heuristic", chain_length, density, seed,
-                                 tenant.tenant_id, heur_metrics))
+                rows.append(_row("heuristic", benchmark, chain_length, density,
+                                 seed, tenant.tenant_id, heur_metrics))
 
-                cf_out = counterfactual.run(tenant.graph)
-                cf_metrics = score(tenant, cf_out)
-                rows.append(_row("counterfactual", chain_length, density, seed,
-                                 tenant.tenant_id, cf_metrics))
+                for method in (signature_cf, reachability_cf):
+                    out = method.run(tenant.graph)
+                    rows.append(_row(method.name, benchmark, chain_length,
+                                     density, seed, tenant.tenant_id,
+                                     score(tenant, out)))
 
                 # Random baseline, budget-matched to the heuristic so the
                 # comparison isolates targeting quality from spend.
@@ -76,16 +90,28 @@ def run_grid(chain_lengths: List[int], densities: List[str], seeds: List[int],
                 }
                 rand_out = random_method.run(tenant.graph, budgets=budgets)
                 rand_metrics = score(tenant, rand_out)
-                rows.append(_row("random", chain_length, density, seed,
-                                 tenant.tenant_id, rand_metrics))
+                rows.append(_row("random", benchmark, chain_length, density,
+                                 seed, tenant.tenant_id, rand_metrics))
 
     return pd.DataFrame(rows)
 
 
-def _row(method: str, chain_length: int, density: str, seed: int,
+def run_all_benchmarks(chain_lengths: List[int], densities: List[str],
+                       seeds: List[int], n_chains: int = 3,
+                       random_seed: int = 0) -> pd.DataFrame:
+    """Run both the original and novel-technique benchmarks, concatenated."""
+    original = run_grid(chain_lengths, densities, seeds, n_chains, random_seed,
+                        novel_technique=False)
+    novel = run_grid(chain_lengths, densities, seeds, n_chains, random_seed,
+                     novel_technique=True)
+    return pd.concat([original, novel], ignore_index=True)
+
+
+def _row(method: str, benchmark: str, chain_length: int, density: str, seed: int,
          tenant_id: str, metrics) -> Dict:
     row = {
         "method": method,
+        "benchmark": benchmark,
         "chain_length": chain_length,
         "density": density,
         "seed": seed,
@@ -97,13 +123,15 @@ def _row(method: str, chain_length: int, density: str, seed: int,
 
 def summarize(df: pd.DataFrame) -> Dict[str, pd.DataFrame]:
     """Aggregate raw rows into per-config and per-method summaries."""
+    group_cols = ["benchmark"] if "benchmark" in df.columns else []
     by_config = (
-        df.groupby(["method", "chain_length", "density"], as_index=False)[METRIC_COLUMNS]
+        df.groupby(group_cols + ["method", "chain_length", "density"],
+                   as_index=False)[METRIC_COLUMNS]
         .mean()
         .round(4)
     )
     by_method = (
-        df.groupby(["method"], as_index=False)[METRIC_COLUMNS]
+        df.groupby(group_cols + ["method"], as_index=False)[METRIC_COLUMNS]
         .mean()
         .round(4)
     )
@@ -120,24 +148,26 @@ def make_plot(df: pd.DataFrame, out_path: str) -> bool:
         print(f"[plot] matplotlib unavailable, skipping plot: {exc}")
         return False
 
-    agg = df.groupby(["method", "chain_length"], as_index=False)[METRIC_COLUMNS].mean()
-    methods = sorted(agg["method"].unique())
+    benchmarks = sorted(df["benchmark"].unique()) if "benchmark" in df.columns else ["all"]
+    methods = sorted(df["method"].unique())
 
-    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
-    for metric, ax, title in (
-        ("f1", axes[0], "Risky-permission detection F1"),
-        ("pct_paths_broken", axes[1], "% planted attack paths broken"),
-    ):
+    fig, axes = plt.subplots(1, len(benchmarks), figsize=(6 * len(benchmarks), 5),
+                             squeeze=False)
+    for col, benchmark in enumerate(benchmarks):
+        ax = axes[0][col]
+        bench_df = df[df["benchmark"] == benchmark] if "benchmark" in df.columns else df
+        agg = bench_df.groupby(["method", "chain_length"], as_index=False)[METRIC_COLUMNS].mean()
         for method in methods:
             sub = agg[agg["method"] == method].sort_values("chain_length")
-            ax.plot(sub["chain_length"], sub[metric], marker="o", label=method)
+            ax.plot(sub["chain_length"], sub["f1"], marker="o", label=method)
         ax.set_xlabel("chain length (role hops)")
-        ax.set_ylabel(metric)
-        ax.set_title(title)
+        ax.set_ylabel("detection F1")
+        ax.set_title(f"{benchmark} benchmark")
+        ax.set_ylim(-0.05, 1.05)
         ax.grid(True, alpha=0.3)
         ax.legend()
 
-    fig.suptitle("RedBlueBrawl evaluation: heuristic vs random baseline")
+    fig.suptitle("RedBlueBrawl: detection F1 by method (signature vs reachability)")
     fig.tight_layout()
     fig.savefig(out_path, dpi=120)
     plt.close(fig)
@@ -184,11 +214,12 @@ def main() -> None:
 
     print(f"Running grid: lengths={chain_lengths} densities={densities} "
           f"seeds={seeds} n_chains={args.n_chains}")
-    df = run_grid(chain_lengths, densities, seeds,
-                  n_chains=args.n_chains, random_seed=args.random_seed)
+    print("Benchmarks: original (sts-based) + novel (unlisted escalation action)")
+    df = run_all_benchmarks(chain_lengths, densities, seeds,
+                            n_chains=args.n_chains, random_seed=args.random_seed)
     summaries = write_outputs(df, args.results_dir)
 
-    print("\n=== Comparison (mean over all tenants) ===")
+    print("\n=== Comparison (mean per benchmark) ===")
     print(summaries["by_method"].to_string(index=False))
     print(f"\nWrote CSVs + plot to {args.results_dir}")
 

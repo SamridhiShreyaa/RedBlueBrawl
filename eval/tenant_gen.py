@@ -78,6 +78,13 @@ DISTRACTOR_SENSITIVE_ACTIONS: List[str] = [
 
 ASSUME_ACTION = "sts:AssumeRole"
 
+# A plausible-but-unlisted AWS-style escalation action used by the
+# novel-technique benchmark. It is deliberately absent from the scorer's
+# ASSUME_ACTIONS and PRIVESC_ACTIONS sets, so any method that recognises
+# escalation by action-name membership is structurally blind to it. A
+# reachability method that follows trust edges must catch it from structure.
+NOVEL_ASSUME_ACTION = "iam:SwapRoleCredentials"
+
 DENSITY_PRESETS: Dict[str, Dict[str, int]] = {
     "low": {"distractor_roles": 8, "distractor_users": 15},
     "medium": {"distractor_roles": 25, "distractor_users": 50},
@@ -99,9 +106,34 @@ def _add_permission(graph: nx.DiGraph, role_id: str, action: str,
     return perm_id
 
 
+def _add_trust_edge(graph: nx.DiGraph, src: str, dst: str, enabling_perm: str) -> None:
+    """Record a role->role assume/trust relationship as graph-level metadata.
+
+    Trust edges are stored on ``graph.graph["trust_edges"]`` rather than as
+    DiGraph edges, so RedAgent/BlueAgent and the signature scorer (which only
+    traverse HAS_ROLE/GRANTS) see exactly the same graph as before. Only a
+    reachability-aware scorer that reads this metadata will materialise the
+    role->role edges. Each trust edge names the permission grant that enables
+    it, so removing that grant severs the edge -- this is what lets the
+    counterfactual attribute escalation risk to the *enabling* permission,
+    regardless of that permission's action name.
+    """
+    graph.graph.setdefault("trust_edges", []).append(
+        {"src": src, "dst": dst, "enabling_perm": enabling_perm}
+    )
+
+
 def _plant_chain(graph: nx.DiGraph, chain_index: int, chain_length: int,
-                 rng: random.Random) -> PlantedChain:
-    """Bury one escalation chain of ``chain_length`` role hops into ``graph``."""
+                 rng: random.Random, assume_action: str = ASSUME_ACTION) -> PlantedChain:
+    """Bury one escalation chain of ``chain_length`` role hops into ``graph``.
+
+    ``assume_action`` is the action granted at each hop to enable assuming the
+    next role. The original benchmark uses ``sts:AssumeRole``; the
+    novel-technique benchmark passes :data:`NOVEL_ASSUME_ACTION` so the
+    escalation is driven by an action absent from any hardcoded privesc list.
+    Either way a role->role trust edge (enabled by that hop's assume grant) is
+    recorded so a reachability scorer can traverse the chain structurally.
+    """
     cid = f"c{chain_index}"
     entry_user = f"u_{cid}_entry"
     graph.add_node(entry_user, label="User", username=entry_user)
@@ -112,11 +144,11 @@ def _plant_chain(graph: nx.DiGraph, chain_index: int, chain_length: int,
     risky_perms: List[str] = []
     roles: List[str] = []
     techniques: List[str] = []
+    hop_assume: List[Tuple[str, str]] = []  # (role_id, assume_perm) per pivot hop
 
     # chain_length counts roles: (chain_length - 1) pivot hops + 1 admin sink.
     n_pivots = max(1, chain_length - 1)
 
-    prev_hop_role = None
     for hop in range(n_pivots):
         role_id = f"r_{cid}_h{hop}"
         graph.add_node(role_id, label="Role", name=role_id, is_overpermissive=True)
@@ -140,13 +172,12 @@ def _plant_chain(graph: nx.DiGraph, chain_index: int, chain_length: int,
 
         # An assume grant so the next hop is reachable (and so the project's
         # RedAgent assume-role inference has something to follow).
-        assume_perm = _add_permission(graph, role_id, ASSUME_ACTION,
+        assume_perm = _add_permission(graph, role_id, assume_action,
                                       is_sensitive=True, suffix="__assume")
         risky_perms.append(assume_perm)
         edges.append((role_id, assume_perm))
         breaking_edges.append((role_id, assume_perm))
-
-        prev_hop_role = role_id
+        hop_assume.append((role_id, assume_perm))
 
     # Admin sink at the end of the chain.
     admin_role = f"r_{cid}_admin"
@@ -160,8 +191,13 @@ def _plant_chain(graph: nx.DiGraph, chain_index: int, chain_length: int,
         # but do NOT gate reachability, so they are not breaking edges.
         edges.append((admin_role, admin_perm))
 
-    # Bury the entry user a little: optionally give them one benign role too,
-    # keeping them at <=2 roles so they still read as a low-privilege user.
+    # Record role->role trust edges: hop h can assume hop h+1 (last hop -> admin),
+    # each enabled by that hop's assume grant.
+    hop_role_ids = [r for r in roles if r != admin_role]
+    for i, (src_role, assume_perm) in enumerate(hop_assume):
+        dst_role = hop_role_ids[i + 1] if i + 1 < len(hop_role_ids) else admin_role
+        _add_trust_edge(graph, src_role, dst_role, assume_perm)
+
     return PlantedChain(
         chain_id=cid,
         technique_actions=techniques,
@@ -174,13 +210,20 @@ def _plant_chain(graph: nx.DiGraph, chain_index: int, chain_length: int,
 
 
 def _add_distractors(graph: nx.DiGraph, n_roles: int, n_users: int,
-                     rng: random.Random) -> List[str]:
-    """Populate the tenant with benign roles/users. Returns distractor role ids."""
+                     rng: random.Random) -> Tuple[List[str], Dict[str, List[str]]]:
+    """Populate the tenant with benign roles/users.
+
+    Returns ``(distractor_role_ids, role_to_benign_perms)`` where the second
+    value maps each distractor role to the benign permission grants on it (used
+    to seed realistic benign trust relationships).
+    """
     distractor_roles: List[str] = []
+    role_benign_perms: Dict[str, List[str]] = {}
     for i in range(n_roles):
         role_id = f"r_d{i}"
         graph.add_node(role_id, label="Role", name=role_id, is_overpermissive=False)
         distractor_roles.append(role_id)
+        role_benign_perms[role_id] = []
 
         n_perms = rng.randint(2, 6)
         for _ in range(n_perms):
@@ -191,8 +234,10 @@ def _add_distractors(graph: nx.DiGraph, n_roles: int, n_users: int,
             else:
                 action = rng.choice(BENIGN_ACTIONS)
                 sensitive = False
-            _add_permission(graph, role_id, action, is_sensitive=sensitive,
-                            suffix=f"__{rng.randrange(1_000_000)}")
+            perm_id = _add_permission(graph, role_id, action, is_sensitive=sensitive,
+                                      suffix=f"__{rng.randrange(1_000_000)}")
+            if not sensitive:
+                role_benign_perms[role_id].append(perm_id)
 
     for i in range(n_users):
         user_id = f"u_d{i}"
@@ -202,11 +247,36 @@ def _add_distractors(graph: nx.DiGraph, n_roles: int, n_users: int,
             for role_id in rng.sample(distractor_roles, k):
                 graph.add_edge(user_id, role_id, relation="HAS_ROLE")
 
-    return distractor_roles
+    return distractor_roles, role_benign_perms
+
+
+def _add_benign_trust_edges(graph: nx.DiGraph, distractor_roles: List[str],
+                            role_benign_perms: Dict[str, List[str]],
+                            rng: random.Random) -> None:
+    """Plant benign role->role trust relationships among distractors as noise.
+
+    These model harmless "role A may assume role B" links. They give the
+    reachability scorer decoy trust paths that must be followed and found to
+    NOT reach a sensitive escalation target -- so it cannot simply treat "has a
+    trust edge" as risky. Each benign trust edge is enabled by an existing
+    benign permission on the source role (no new nodes, so every other method
+    sees an unchanged graph).
+    """
+    sources = [r for r in distractor_roles if role_benign_perms.get(r)]
+    n_edges = len(distractor_roles) // 4
+    for _ in range(n_edges):
+        if not sources or len(distractor_roles) < 2:
+            break
+        src = rng.choice(sources)
+        dst = rng.choice(distractor_roles)
+        if dst == src:
+            continue
+        enabling_perm = rng.choice(role_benign_perms[src])
+        _add_trust_edge(graph, src, dst, enabling_perm)
 
 
 def generate_tenant(seed: int, chain_length: int = 3, density: str = "low",
-                    n_chains: int = 3) -> Tenant:
+                    n_chains: int = 3, novel_technique: bool = False) -> Tenant:
     """Deterministically build a tenant with ``n_chains`` planted escalations.
 
     Args:
@@ -214,9 +284,16 @@ def generate_tenant(seed: int, chain_length: int = 3, density: str = "low",
         chain_length: Number of role hops per chain (2..5 recommended).
         density: One of ``"low"``, ``"medium"``, ``"high"`` (distractor volume).
         n_chains: How many independent escalation chains to plant.
+        novel_technique: If True, chains escalate via :data:`NOVEL_ASSUME_ACTION`
+            (absent from every hardcoded privesc list) instead of
+            ``sts:AssumeRole``. The trust-edge structure is identical, so a
+            reachability scorer still traverses the chain while a signature
+            scorer goes blind.
 
     Returns:
-        A :class:`~eval.tenant.Tenant` carrying the graph and ground truth.
+        A :class:`~eval.tenant.Tenant` carrying the graph and ground truth. The
+        graph carries role->role trust relationships on
+        ``graph.graph["trust_edges"]`` (see :func:`_add_trust_edge`).
     """
     if density not in DENSITY_PRESETS:
         raise ValueError(
@@ -227,18 +304,23 @@ def generate_tenant(seed: int, chain_length: int = 3, density: str = "low",
 
     rng = random.Random(seed)
     graph = nx.DiGraph()
+    graph.graph["trust_edges"] = []
+
+    assume_action = NOVEL_ASSUME_ACTION if novel_technique else ASSUME_ACTION
 
     chains: List[PlantedChain] = []
     for ci in range(n_chains):
-        chains.append(_plant_chain(graph, ci, chain_length, rng))
+        chains.append(_plant_chain(graph, ci, chain_length, rng, assume_action))
 
     preset = DENSITY_PRESETS[density]
-    distractor_roles = _add_distractors(
+    distractor_roles, role_benign_perms = _add_distractors(
         graph, preset["distractor_roles"], preset["distractor_users"], rng
     )
 
     # Sprinkle each chain's entry user into the benign population so the
-    # escalation entry points are not trivially isolated.
+    # escalation entry points are not trivially isolated. (Done before benign
+    # trust edges so the DiGraph is identical to the pre-trust-edge generator;
+    # trust edges are additive metadata only.)
     for chain in chains:
         entry_user = chain.nodes[0]
         if distractor_roles:
@@ -246,5 +328,8 @@ def generate_tenant(seed: int, chain_length: int = 3, density: str = "low",
             if not graph.has_edge(entry_user, role_id):
                 graph.add_edge(entry_user, role_id, relation="HAS_ROLE")
 
-    tenant_id = f"seed{seed}_len{chain_length}_{density}_n{n_chains}"
+    _add_benign_trust_edges(graph, distractor_roles, role_benign_perms, rng)
+
+    suffix = "_novel" if novel_technique else ""
+    tenant_id = f"seed{seed}_len{chain_length}_{density}_n{n_chains}{suffix}"
     return Tenant(tenant_id=tenant_id, graph=graph, chains=chains)
