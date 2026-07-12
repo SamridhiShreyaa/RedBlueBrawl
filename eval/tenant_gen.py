@@ -78,6 +78,37 @@ DISTRACTOR_SENSITIVE_ACTIONS: List[str] = [
 
 ASSUME_ACTION = "sts:AssumeRole"
 
+# A wide pool of plausible, non-escalating AWS actions used ONLY to build
+# planted near-duplicate roles for the role-mining benchmark. Deliberately
+# disjoint from TECHNIQUE/ADMIN/ASSUME and mostly from BENIGN, so a planted
+# duplicate pair (which shares ~6 of these) stands out from ordinary
+# distractors (which draw from the small BENIGN pool) and cannot be confused
+# with a privilege-escalation role.
+CONSOLIDATION_ACTIONS: List[str] = [
+    "ec2:StartInstances",
+    "ec2:StopInstances",
+    "rds:DescribeDBInstances",
+    "lambda:InvokeFunction",
+    "cloudformation:DescribeStacks",
+    "secretsmanager:GetSecretValue",
+    "ssm:GetParameter",
+    "route53:ListHostedZones",
+    "elasticloadbalancing:DescribeLoadBalancers",
+    "autoscaling:DescribeAutoScalingGroups",
+    "cloudtrail:LookupEvents",
+    "athena:StartQueryExecution",
+    "glue:GetTable",
+    "redshift:DescribeClusters",
+    "stepfunctions:StartExecution",
+    "apigateway:GET",
+]
+
+# A common action every planted duplicate role also holds, so the
+# role-permission projection stays a single connected component (node2vec's
+# separation collapses on disconnected components). It is an ordinary benign
+# action, shared with distractors, so it adds no redundancy signal of its own.
+CONSOLIDATION_ANCHOR = "s3:GetObject"
+
 # A plausible-but-unlisted AWS-style escalation action used by the
 # novel-technique benchmark. It is deliberately absent from the scorer's
 # ASSUME_ACTIONS and PRIVESC_ACTIONS sets, so any method that recognises
@@ -275,8 +306,50 @@ def _add_benign_trust_edges(graph: nx.DiGraph, distractor_roles: List[str],
         _add_trust_edge(graph, src, dst, enabling_perm)
 
 
+def _plant_duplicate_roles(graph: nx.DiGraph, n_pairs: int,
+                           rng: random.Random) -> List[Tuple[str, str]]:
+    """Bury ``n_pairs`` deliberately near-duplicate benign role pairs.
+
+    Each pair is a base role and a partner that grants the *same* action set
+    with 1-2 edits (one removal and/or one addition), i.e. Jaccard >= ~0.75 --
+    the textbook "these two roles are redundant, merge them" signal that real
+    role mining exists to find. Both roles also hold :data:`CONSOLIDATION_ANCHOR`
+    so the role-permission graph stays connected. Each gets a holder user so it
+    is not a structurally isolated pair. Returns the list of planted
+    ``(base_role, partner_role)`` pairs (role-mining ground truth).
+    """
+    pairs: List[Tuple[str, str]] = []
+    for k in range(n_pairs):
+        core = set(rng.sample(CONSOLIDATION_ACTIONS, 6))
+        base_actions = core | {CONSOLIDATION_ANCHOR}
+
+        # Partner: drop one core action, add a different one -> 1-2 grant delta.
+        partner_actions = set(base_actions)
+        drop = rng.choice(sorted(core))
+        partner_actions.discard(drop)
+        remaining = [a for a in CONSOLIDATION_ACTIONS if a not in partner_actions]
+        if remaining:
+            partner_actions.add(rng.choice(sorted(remaining)))
+
+        base_id = f"r_dup{k}_a"
+        partner_id = f"r_dup{k}_b"
+        for role_id, actions in ((base_id, base_actions), (partner_id, partner_actions)):
+            graph.add_node(role_id, label="Role", name=role_id,
+                           is_overpermissive=False, is_planted_duplicate=True)
+            for action in sorted(actions):
+                _add_permission(graph, role_id, action, is_sensitive=False,
+                                suffix=f"__{rng.randrange(1_000_000)}")
+            holder = f"u_dup{k}_{role_id[-1]}"
+            graph.add_node(holder, label="User", username=holder)
+            graph.add_edge(holder, role_id, relation="HAS_ROLE")
+
+        pairs.append((base_id, partner_id))
+    return pairs
+
+
 def generate_tenant(seed: int, chain_length: int = 3, density: str = "low",
-                    n_chains: int = 3, novel_technique: bool = False) -> Tenant:
+                    n_chains: int = 3, novel_technique: bool = False,
+                    n_duplicate_pairs: int = 0) -> Tenant:
     """Deterministically build a tenant with ``n_chains`` planted escalations.
 
     Args:
@@ -289,11 +362,18 @@ def generate_tenant(seed: int, chain_length: int = 3, density: str = "low",
             ``sts:AssumeRole``. The trust-edge structure is identical, so a
             reachability scorer still traverses the chain while a signature
             scorer goes blind.
+        n_duplicate_pairs: How many deliberately near-duplicate benign role
+            pairs to plant (role-mining ground truth). Defaults to 0, in which
+            case generation is byte-identical to before this feature: the
+            duplicate roles are added last, and only when this is > 0, so the
+            privesc benchmark is unaffected.
 
     Returns:
         A :class:`~eval.tenant.Tenant` carrying the graph and ground truth. The
         graph carries role->role trust relationships on
-        ``graph.graph["trust_edges"]`` (see :func:`_add_trust_edge`).
+        ``graph.graph["trust_edges"]`` (see :func:`_add_trust_edge`). If
+        ``n_duplicate_pairs > 0`` the tenant's ``duplicate_role_pairs`` records
+        the planted near-duplicate role pairs.
     """
     if density not in DENSITY_PRESETS:
         raise ValueError(
@@ -330,6 +410,15 @@ def generate_tenant(seed: int, chain_length: int = 3, density: str = "low",
 
     _add_benign_trust_edges(graph, distractor_roles, role_benign_perms, rng)
 
+    # Role-mining ground truth. Added LAST and only when requested, so a tenant
+    # with n_duplicate_pairs=0 is byte-identical to the pre-feature generator.
+    duplicate_pairs: List[Tuple[str, str]] = []
+    if n_duplicate_pairs > 0:
+        duplicate_pairs = _plant_duplicate_roles(graph, n_duplicate_pairs, rng)
+
     suffix = "_novel" if novel_technique else ""
+    if n_duplicate_pairs > 0:
+        suffix += f"_dup{n_duplicate_pairs}"
     tenant_id = f"seed{seed}_len{chain_length}_{density}_n{n_chains}{suffix}"
-    return Tenant(tenant_id=tenant_id, graph=graph, chains=chains)
+    return Tenant(tenant_id=tenant_id, graph=graph, chains=chains,
+                  duplicate_role_pairs=duplicate_pairs)

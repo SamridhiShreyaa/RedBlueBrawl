@@ -30,7 +30,12 @@ Our system:
 ## Key Features
 
 * IAM relationship graph modeling
-* Role mining using graph algorithms
+* **Role mining** — near-duplicate/redundant roles are found by embedding each
+  role over a role-permission graph with **node2vec** and clustering the
+  embeddings, then surfacing consolidation suggestions (`src/graph/role_mining.py`).
+  Two honest baselines ship alongside it (Jaccard-on-permission-sets and the
+  legacy permission-count threshold); see *Role mining* below and `eval/` for
+  the benchmark that compares them on planted duplicate roles.
 * Detection of excessive privileges
 * **Counterfactual attack-path risk scoring** — permissions are ranked by how many
   reachable privilege-escalation routes their removal would break (`do(grant = removed)`,
@@ -88,6 +93,49 @@ no trust/AssumeRolePolicy structure. **Reachability becomes the recommended
 default once real IAM ingestion with trust-policy data lands (Feature 9)** — at
 that point it is a one-line config change (`RISK_SCORER_METHOD=reachability`),
 not a re-architecture.
+
+### Role mining (finding redundant roles)
+
+`src/graph/role_mining.py` implements the actual role-mining technique from the
+literature: cluster roles by the **set of permissions they grant** and surface
+groups whose sets overlap enough to merge. (The legacy
+`queries.get_high_privilege_roles` only thresholds a role's permission *count* —
+it says nothing about which roles are redundant with each other.)
+
+```python
+from src.graph.role_mining import consolidation_suggestions, find_near_duplicate_roles
+
+# roles whose permission sets overlap enough to merge, most-redundant first
+for s in consolidation_suggestions(graph, method="node2vec"):
+    print(s.roles, "shared:", s.shared_actions, "tightness:", s.mean_jaccard)
+
+pairs = find_near_duplicate_roles(graph, method="jaccard")  # or "node2vec" / "count"
+```
+
+Three methods are provided and **benchmarked honestly** against tenants with
+planted near-duplicate roles (`python eval/role_mining_eval.py`):
+
+* **`node2vec`** — embed each role over a role-permission bipartite projection,
+  then cluster the embeddings. This is the graph-algorithm the README promised.
+* **`jaccard`** — cluster on exact Jaccard overlap of permission sets. The
+  strong, simple baseline.
+* **`count`** — the legacy permission-count threshold. A floor, not a competitor.
+
+**Honest result (mean over the benchmark grid):**
+
+| method   | precision | recall |   f1   |
+| -------- | :-------: | :----: | :----: |
+| jaccard  |   0.80    |  1.00  | **0.88** |
+| node2vec |   0.47    |  0.88  |   0.59   |
+| count    |   0.09    |  1.00  |   0.16   |
+
+node2vec is *real* role mining and dramatically better than the count threshold
+the README used to imply — but on this task it **does not beat the Jaccard
+baseline**: it over-merges structurally-similar-but-distinct roles, which costs
+precision. Jaccard-on-permission-sets is simpler and better for exact/near
+overlap. node2vec's advantage would show on fuzzy/transitive similarity, not the
+exact-overlap case this benchmark measures; we report it as it is rather than
+against the weakest baseline. See [`eval/README.md`](eval/README.md#role-mining-benchmark).
 
 **2. Start Neo4j with one command:**
 

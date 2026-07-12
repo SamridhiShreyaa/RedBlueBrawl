@@ -67,8 +67,29 @@ class Tenant:
     tenant_id: str
     graph: nx.DiGraph
     chains: List[PlantedChain] = field(default_factory=list)
+    # Ground truth for role mining: (role_a, role_b) pairs deliberately planted
+    # to be near-duplicates (same permission set +/- 1-2 grants). Empty unless
+    # the tenant was generated with ``n_duplicate_pairs > 0``.
+    duplicate_role_pairs: List[Edge] = field(default_factory=list)
 
     # --- ground-truth views -------------------------------------------------
+
+    def planted_duplicate_pairs(self) -> Set[Edge]:
+        """Planted near-duplicate role pairs as a set of normalized tuples."""
+        return {tuple(sorted(pair)) for pair in self.duplicate_role_pairs}
+
+    def chain_roles(self) -> Set[str]:
+        """Every role that belongs to a planted escalation chain.
+
+        The role-mining benchmark scores over *non-chain* roles: planted
+        escalation chains create structurally-identical roles across chains
+        (a separate experiment), which would otherwise pollute duplicate-pair
+        ground truth.
+        """
+        roles: Set[str] = set()
+        for chain in self.chains:
+            roles.update(chain.roles)
+        return roles
 
     def all_permissions(self) -> Set[str]:
         return {

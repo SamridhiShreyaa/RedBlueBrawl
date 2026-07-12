@@ -116,3 +116,51 @@ README). Reachability requires trust-edge data and fails loudly without it. It b
 recommended default once real IAM ingestion with trust-policy data lands (Feature 9): a
 config change, not a re-architecture, precisely because this eval already shows it
 generalises where the signature scorer does not.
+
+## Role-mining benchmark
+
+A separate harness (`eval/role_mining_eval.py`) grades the *other* README claim — "role
+mining using graph algorithms" — rather than privesc detection. It plants deliberately
+**near-duplicate role pairs** (same permission set ± 1-2 grants, via
+`generate_tenant(..., n_duplicate_pairs=k)`) and measures whether each method recovers those
+exact pairs.
+
+```bash
+python eval/role_mining_eval.py                 # 5 seeds x {low,medium}, 4 planted pairs each
+```
+
+Three methods are compared at the **pair level** (`src/graph/role_mining.py`):
+
+- **`node2vec`** — embed each role over a role-permission **bipartite projection** (grants
+  collapsed to their action, so two roles granting the same actions become adjacent through
+  shared action nodes; per-grant nodes in the raw graph are role-scoped and would look
+  unrelated), then cluster the embeddings. This is the graph-algorithm the README promised.
+- **`jaccard`** — cluster roles on exact Jaccard overlap of their permission sets. The
+  strong, obvious baseline node2vec must actually beat to earn its keep.
+- **`count`** — the legacy permission-count threshold (`queries.get_high_privilege_roles`).
+  It pairs any two big roles regardless of overlap; a floor, not a competitor.
+
+**Scoring universe.** Planted escalation chains create structurally-identical roles across
+chains (a different experiment), so scoring is restricted to **non-chain** roles
+(`Tenant.chain_roles`); tenants are generated with `n_chains=1` so there is no cross-chain
+duplication to begin with.
+
+**Headline result** (mean over the grid, `results/role_mining_summary.csv`):
+
+| method   | precision | recall |   f1   |
+| -------- | :-------: | :----: | :----: |
+| jaccard  |   0.800   | 1.000  | **0.877** |
+| node2vec |   0.473   | 0.875  |   0.594   |
+| count    |   0.086   | 1.000  |   0.157   |
+
+**The honest finding — node2vec does not beat Jaccard here.** node2vec is *real* role mining
+and crushes the count threshold (0.59 vs 0.16 F1), which is what the README's "graph
+algorithms" phrasing actually needed. But the simple Jaccard-on-permission-sets baseline
+(0.88) clearly beats it. node2vec's clustering **over-merges** structurally-similar-but-
+distinct roles, so its precision (0.47) trails Jaccard's (0.80); a threshold sweep confirms
+its best-case F1 (~0.57 at cosine distance 0.15) still loses to Jaccard's (~0.88 at Jaccard
+distance 0.30). Where an embedding *would* earn its keep is fuzzy / transitive similarity
+(roles that are redundant without sharing exact action strings) — but that is not the exact-
+overlap case this benchmark measures, and reporting node2vec as a win here would mean
+choosing a weaker baseline on purpose. Both real methods are shipped so the pipeline can use
+whichever fits; for exact near-duplicate detection, `jaccard` is the recommendation.
