@@ -67,8 +67,50 @@ class Tenant:
     tenant_id: str
     graph: nx.DiGraph
     chains: List[PlantedChain] = field(default_factory=list)
+    # Ground truth for role mining: (role_a, role_b) pairs deliberately planted
+    # to be near-duplicates (same permission set +/- 1-2 grants). Empty unless
+    # the tenant was generated with ``n_duplicate_pairs > 0``.
+    duplicate_role_pairs: List[Edge] = field(default_factory=list)
+    # Ground truth for FUNCTIONAL similarity: (role_a, role_b) pairs planted
+    # from the same functional group with only partial (sometimes zero) exact
+    # permission overlap. Empty unless ``n_functional_pairs > 0``.
+    functional_role_pairs: List[Edge] = field(default_factory=list)
+    # Cohort roles planted alongside functional pairs to provide the group's
+    # co-occurrence structure. Scaffolding, not ground-truth pairs: they are
+    # excluded from the functional benchmark's pair universe (pairing a role
+    # with a cohort is functionally correct but unplanted).
+    functional_cohort_roles: List[str] = field(default_factory=list)
 
     # --- ground-truth views -------------------------------------------------
+
+    def planted_duplicate_pairs(self) -> Set[Edge]:
+        """Planted near-duplicate role pairs as a set of normalized tuples."""
+        return {tuple(sorted(pair)) for pair in self.duplicate_role_pairs}
+
+    def planted_functional_pairs(self) -> Set[Edge]:
+        """Planted functionally-similar role pairs as normalized tuples."""
+        return {tuple(sorted(pair)) for pair in self.functional_role_pairs}
+
+    def functional_pair_roles(self) -> Set[str]:
+        """Every role that belongs to a planted functional pair (not cohorts)."""
+        roles: Set[str] = set()
+        for a, b in self.functional_role_pairs:
+            roles.add(a)
+            roles.add(b)
+        return roles
+
+    def chain_roles(self) -> Set[str]:
+        """Every role that belongs to a planted escalation chain.
+
+        The role-mining benchmark scores over *non-chain* roles: planted
+        escalation chains create structurally-identical roles across chains
+        (a separate experiment), which would otherwise pollute duplicate-pair
+        ground truth.
+        """
+        roles: Set[str] = set()
+        for chain in self.chains:
+            roles.update(chain.roles)
+        return roles
 
     def all_permissions(self) -> Set[str]:
         return {

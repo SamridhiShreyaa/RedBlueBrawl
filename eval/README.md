@@ -116,3 +116,94 @@ README). Reachability requires trust-edge data and fails loudly without it. It b
 recommended default once real IAM ingestion with trust-policy data lands (Feature 9): a
 config change, not a re-architecture, precisely because this eval already shows it
 generalises where the signature scorer does not.
+
+## Role-mining benchmarks
+
+A separate harness (`eval/role_mining_eval.py`) grades the *other* README claim — "role
+mining using graph algorithms" — on **two** pair-level benchmarks with planted ground truth:
+
+- **exact** — near-duplicate pairs (same permission set ± 1-2 grants, via
+  `generate_tenant(..., n_duplicate_pairs=k)`). Measures exact redundancy.
+- **functional** — same-job pairs drawn from one **functional group** (e.g. two "S3
+  data-access" roles) whose exact action overlap is partial and, for some pairs, **zero**
+  (`n_functional_pairs=k`). Measures whether a method can pair roles that do the same job
+  via related-but-not-identical permissions — the case a set-overlap metric cannot see
+  *directly* by construction.
+
+```bash
+python eval/role_mining_eval.py                 # both benchmarks, 5 seeds x {low,medium}
+```
+
+Methods compared at the **pair level** (`src/graph/role_mining.py`):
+
+- **`jaccard`** — cluster roles on Jaccard overlap of their permission sets
+  (average-linkage agglomerative clustering). The recommended method.
+- **`count`** — the legacy permission-count threshold (`queries.get_high_privilege_roles`).
+  It pairs any two big roles regardless of overlap; a floor, not a competitor.
+- **`node2vec`** *(dropped — rows below are its recorded evidence)* — embedded each role
+  over a role-permission **bipartite projection** (grants collapsed to their action, so two
+  roles granting the same actions become adjacent through shared action nodes), then
+  clustered the embeddings. Removed after the results below; the implementation and a fully
+  reproducible comparison live at evidence commit `25a2c2c`.
+
+### Functional generator design (auditable, defined on its own terms)
+
+Four disjoint functional groups of 8 related actions each (`FUNCTIONAL_GROUPS` in
+`tenant_gen.py`: s3 data access, ec2 operations, observability, data analytics). Pair *k*
+takes two 4-action samples from one group with an exact-overlap schedule of **2, 1, 0, 1**
+shared actions — the 0 is the point: a same-function pair with no shared exact action, which
+no set-overlap metric can pair with its partner *directly* (both roles then share only the
+connectivity anchor, exactly like an unrelated cross-group pair). Each group also gets 3
+**cohort roles** (random group samples): the co-occurrence structure that makes a group a
+group in the graph — without them a zero-overlap pair is informationally invisible to *any*
+method. Cohorts are scaffolding, recorded separately, excluded from scoring.
+
+**Scoring universes** (applied identically to every method): exact scores over non-chain
+roles; functional scores over the **planted functional-pair roles** — the question is
+discrimination (match your same-function partner, refuse cross-function roles). Cohort pairs
+are excluded because pairing a role with its group's cohort is functionally correct but
+unplanted; distractor–distractor pairs are excluded because the small benign action pool
+makes random distractors *genuine* exact near-duplicates, which the exact benchmark already
+measures.
+
+**Operating points**: functional pairs sit in a looser similarity band than exact
+duplicates, so each method got its own **symmetrically swept** threshold per benchmark
+(best mean F1, same procedure for both): node2vec cosine distance 0.15 exact / 0.50
+functional; jaccard distance 0.30 exact / 0.80 functional. Sweeps: node2vec held perfect
+functional F1 for cosine distance 0.40–0.55 (0.65 → 0.344); jaccard for distance 0.75–0.85
+(0.90 → 0.250 total collapse; 0.70 → 0.952).
+
+### Headline result — both benchmarks side by side
+
+Mean over the grid (`results/role_mining_summary.csv`):
+
+| benchmark  | method   | precision | recall |   f1   |
+| ---------- | -------- | :-------: | :----: | :----: |
+| exact      | jaccard  |   0.800   | 1.000  | **0.877** |
+| exact      | node2vec |   0.495   | 0.900  |   0.619   |
+| exact      | count    |   0.086   | 1.000  |   0.157   |
+| functional | jaccard  |   1.000   | 1.000  | **1.000** |
+| functional | node2vec |   1.000   | 1.000  | **1.000** |
+| functional | count    |   0.143   | 1.000  |   0.250   |
+
+**Exact: Jaccard wins clearly** (0.877 vs 0.619 — node2vec over-merges
+structurally-similar-but-distinct roles, costing precision).
+
+**Functional: a tie, not the expected node2vec win.** The hypothesis was that Jaccard,
+blind to zero-exact-overlap pairs, would cede recall to node2vec here. The benchmark
+falsified it: **average-linkage clustering reaches zero-overlap pairs *transitively*** —
+both roles overlap their group's cohort roles, and the clustering merges the pair through
+those bridges. That is the same co-occurrence channel node2vec's random walks exploit, so
+given shared clustering machinery, plain Jaccard extracts the same signal. Both methods are
+perfect across the full grid (verified through high density and across their threshold
+bands: jaccard holds F1 1.0 for distance 0.75–0.85, node2vec for 0.40–0.55).
+
+**Verdict — node2vec was not earning its dependency, so it was dropped.** It *loses* exact
+(0.62 vs 0.88) and only *ties* functional; there is no benchmark where the embedding beats
+Jaccard-plus-clustering. Per the pre-registered decision rule ("if node2vec doesn't beat
+Jaccard even on functional similarity, drop it"), the method and its dependency were removed
+in the commit after the evidence landed. The committed CSVs retain the node2vec rows as the
+record; to reproduce them, check out evidence commit `25a2c2c` (which contains the full
+implementation, its tests, and a cross-process embedding-determinism proof via a stable
+gensim ``hashfxn`` — also moot after the drop, since Jaccard clustering is exact set
+arithmetic with no seeds or hash-order sensitivity).
