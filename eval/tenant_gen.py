@@ -109,6 +109,67 @@ CONSOLIDATION_ACTIONS: List[str] = [
 # action, shared with distractors, so it adds no redundancy signal of its own.
 CONSOLIDATION_ANCHOR = "s3:GetObject"
 
+# Functional groups for the FUNCTIONAL-similarity benchmark: families of
+# related actions such that two roles drawn from the same group "do the same
+# job" even when their exact action strings barely overlap. Pools are disjoint
+# from every other action list above so group membership is unambiguous.
+# A planted functional pair takes two partial samples from one group; the
+# schedule below forces some pairs to share few or even ZERO exact actions --
+# exactly the case Jaccard-on-permission-sets is structurally blind to.
+FUNCTIONAL_GROUPS: Dict[str, List[str]] = {
+    "s3_data_access": [
+        "s3:ListBucket",
+        "s3:GetObjectVersion",
+        "s3:GetObjectTagging",
+        "s3:PutObjectTagging",
+        "s3:GetBucketLocation",
+        "s3:ListBucketVersions",
+        "s3:GetObjectAcl",
+        "s3:RestoreObject",
+    ],
+    "ec2_operations": [
+        "ec2:StartInstancesFleet",
+        "ec2:StopInstancesFleet",
+        "ec2:RebootInstances",
+        "ec2:DescribeInstanceStatus",
+        "ec2:CreateTags",
+        "ec2:DescribeVolumes",
+        "ec2:AttachVolume",
+        "ec2:DescribeSnapshots",
+    ],
+    "observability": [
+        "logs:GetLogEvents",
+        "logs:FilterLogEvents",
+        "logs:DescribeLogGroups",
+        "cloudwatch:GetMetricData",
+        "cloudwatch:ListMetrics",
+        "cloudwatch:DescribeAlarms",
+        "xray:GetTraceSummaries",
+        "xray:BatchGetTraces",
+    ],
+    "data_analytics": [
+        "athena:StartQueryRun",
+        "athena:GetQueryResults",
+        "glue:GetTableVersion",
+        "glue:GetDatabase",
+        "glue:GetPartitions",
+        "redshift:GetClusterCredentials",
+        "redshift-data:ExecuteStatement",
+        "lakeformation:GetDataAccess",
+    ],
+}
+
+# Exact-overlap schedule for planted functional pairs, cycled per pair: how
+# many group actions pair k's two roles share. The 0 entry is the point of the
+# benchmark -- a same-function pair with NO shared exact action, invisible to
+# any set-overlap metric by construction.
+FUNCTIONAL_OVERLAP_CYCLE: Tuple[int, ...] = (2, 1, 0, 1)
+
+# How many actions (from the group pool) each functional role carries, and how
+# many cohort roles per group provide the co-occurrence structure.
+FUNCTIONAL_ROLE_SIZE = 4
+FUNCTIONAL_COHORTS_PER_GROUP = 3
+
 # A plausible-but-unlisted AWS-style escalation action used by the
 # novel-technique benchmark. It is deliberately absent from the scorer's
 # ASSUME_ACTIONS and PRIVESC_ACTIONS sets, so any method that recognises
@@ -347,9 +408,81 @@ def _plant_duplicate_roles(graph: nx.DiGraph, n_pairs: int,
     return pairs
 
 
+def _plant_functional_pairs(
+    graph: nx.DiGraph, n_pairs: int, rng: random.Random,
+) -> Tuple[List[Tuple[str, str]], List[str]]:
+    """Bury ``n_pairs`` functionally-similar role pairs plus group cohorts.
+
+    Generator design (stated explicitly so the benchmark is auditable):
+
+    * Pair k draws from functional group ``k % len(FUNCTIONAL_GROUPS)``. Both
+      roles take :data:`FUNCTIONAL_ROLE_SIZE` actions from that group's pool:
+      ``FUNCTIONAL_OVERLAP_CYCLE[k % 4]`` shared actions, the rest disjoint.
+      The cycle includes 0 -- a same-function pair with **no** shared exact
+      action, which no set-overlap metric can pair with its partner even in
+      principle (both roles then share only the connectivity anchor, exactly
+      like an unrelated cross-group pair).
+    * Every functional role also holds :data:`CONSOLIDATION_ANCHOR` so the
+      role-permission projection stays one connected component.
+    * Each group used gets :data:`FUNCTIONAL_COHORTS_PER_GROUP` cohort roles
+      (random group samples). Cohorts are the co-occurrence structure that
+      makes a functional group a *group* in the graph -- without them, a
+      zero-overlap pair is structurally disconnected inside its group and NO
+      method could pair it. They are scaffolding, recorded separately and
+      excluded from the benchmark's pair universe.
+
+    Returns ``(pairs, cohort_role_ids)``.
+    """
+    pairs: List[Tuple[str, str]] = []
+    cohorts: List[str] = []
+    group_names = sorted(FUNCTIONAL_GROUPS)
+    groups_used: List[str] = []
+
+    def add_functional_role(role_id: str, actions: set, group: str,
+                            is_cohort: bool) -> None:
+        graph.add_node(role_id, label="Role", name=role_id,
+                       is_overpermissive=False, functional_group=group,
+                       is_planted_functional=not is_cohort,
+                       is_functional_cohort=is_cohort)
+        for action in sorted(actions | {CONSOLIDATION_ANCHOR}):
+            _add_permission(graph, role_id, action, is_sensitive=False,
+                            suffix=f"__{rng.randrange(1_000_000)}")
+        holder = f"u_{role_id}"
+        graph.add_node(holder, label="User", username=holder)
+        graph.add_edge(holder, role_id, relation="HAS_ROLE")
+
+    for k in range(n_pairs):
+        group = group_names[k % len(group_names)]
+        pool = FUNCTIONAL_GROUPS[group]
+        overlap = FUNCTIONAL_OVERLAP_CYCLE[k % len(FUNCTIONAL_OVERLAP_CYCLE)]
+
+        shared = rng.sample(sorted(pool), overlap)
+        rest = [a for a in pool if a not in shared]
+        rng.shuffle(rest)
+        n_private = FUNCTIONAL_ROLE_SIZE - overlap
+        a_actions = set(shared) | set(rest[:n_private])
+        b_actions = set(shared) | set(rest[n_private:2 * n_private])
+
+        role_a, role_b = f"r_fn{k}_a", f"r_fn{k}_b"
+        add_functional_role(role_a, a_actions, group, is_cohort=False)
+        add_functional_role(role_b, b_actions, group, is_cohort=False)
+        pairs.append((role_a, role_b))
+
+        if group not in groups_used:
+            groups_used.append(group)
+            for c in range(FUNCTIONAL_COHORTS_PER_GROUP):
+                cohort_id = f"r_fnco_{group}_{c}"
+                cohort_actions = set(rng.sample(sorted(pool), FUNCTIONAL_ROLE_SIZE))
+                add_functional_role(cohort_id, cohort_actions, group, is_cohort=True)
+                cohorts.append(cohort_id)
+
+    return pairs, cohorts
+
+
 def generate_tenant(seed: int, chain_length: int = 3, density: str = "low",
                     n_chains: int = 3, novel_technique: bool = False,
-                    n_duplicate_pairs: int = 0) -> Tenant:
+                    n_duplicate_pairs: int = 0,
+                    n_functional_pairs: int = 0) -> Tenant:
     """Deterministically build a tenant with ``n_chains`` planted escalations.
 
     Args:
@@ -367,6 +500,11 @@ def generate_tenant(seed: int, chain_length: int = 3, density: str = "low",
             case generation is byte-identical to before this feature: the
             duplicate roles are added last, and only when this is > 0, so the
             privesc benchmark is unaffected.
+        n_functional_pairs: How many functionally-similar role pairs to plant
+            (same functional group, partial -- sometimes zero -- exact overlap;
+            see :func:`_plant_functional_pairs` for the auditable design).
+            Defaults to 0 and is likewise added last, so existing benchmarks
+            stay byte-identical.
 
     Returns:
         A :class:`~eval.tenant.Tenant` carrying the graph and ground truth. The
@@ -411,14 +549,25 @@ def generate_tenant(seed: int, chain_length: int = 3, density: str = "low",
     _add_benign_trust_edges(graph, distractor_roles, role_benign_perms, rng)
 
     # Role-mining ground truth. Added LAST and only when requested, so a tenant
-    # with n_duplicate_pairs=0 is byte-identical to the pre-feature generator.
+    # with n_duplicate_pairs=0 / n_functional_pairs=0 is byte-identical to the
+    # pre-feature generator.
     duplicate_pairs: List[Tuple[str, str]] = []
     if n_duplicate_pairs > 0:
         duplicate_pairs = _plant_duplicate_roles(graph, n_duplicate_pairs, rng)
 
+    functional_pairs: List[Tuple[str, str]] = []
+    functional_cohorts: List[str] = []
+    if n_functional_pairs > 0:
+        functional_pairs, functional_cohorts = _plant_functional_pairs(
+            graph, n_functional_pairs, rng)
+
     suffix = "_novel" if novel_technique else ""
     if n_duplicate_pairs > 0:
         suffix += f"_dup{n_duplicate_pairs}"
+    if n_functional_pairs > 0:
+        suffix += f"_fn{n_functional_pairs}"
     tenant_id = f"seed{seed}_len{chain_length}_{density}_n{n_chains}{suffix}"
     return Tenant(tenant_id=tenant_id, graph=graph, chains=chains,
-                  duplicate_role_pairs=duplicate_pairs)
+                  duplicate_role_pairs=duplicate_pairs,
+                  functional_role_pairs=functional_pairs,
+                  functional_cohort_roles=functional_cohorts)

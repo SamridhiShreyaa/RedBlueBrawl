@@ -19,8 +19,13 @@ from src.graph.role_mining import (
     find_near_duplicate_roles,
     role_action_sets,
 )
-from eval.tenant_gen import CONSOLIDATION_ANCHOR, generate_tenant
-from eval.role_mining_eval import evaluate_tenant
+from eval.tenant_gen import (
+    CONSOLIDATION_ANCHOR,
+    FUNCTIONAL_GROUPS,
+    FUNCTIONAL_OVERLAP_CYCLE,
+    generate_tenant,
+)
+from eval.role_mining_eval import evaluate_functional_tenant, evaluate_tenant
 
 
 # --------------------------------------------------------------------------
@@ -222,3 +227,115 @@ def test_jaccard_beats_node2vec_f1_the_honest_finding():
         jac_f1.append(evaluate_tenant(tenant, "jaccard").f1)
         n2v_f1.append(evaluate_tenant(tenant, "node2vec").f1)
     assert np.mean(jac_f1) > np.mean(n2v_f1)
+
+
+# --------------------------------------------------------------------------
+# functional-pair planting (ground truth) and byte-identical default
+# --------------------------------------------------------------------------
+
+def _group_actions(sets, role):
+    return sets[role] - {CONSOLIDATION_ANCHOR}
+
+
+def test_planted_functional_pairs_follow_the_stated_design():
+    tenant = generate_tenant(seed=0, chain_length=3, density="low",
+                             n_chains=1, n_functional_pairs=4)
+    assert len(tenant.functional_role_pairs) == 4
+    assert tenant.functional_cohort_roles  # cohorts recorded as scaffolding
+
+    sets = role_action_sets(tenant.graph)
+    overlaps = []
+    for k, (a, b) in enumerate(tenant.functional_role_pairs):
+        group = tenant.graph.nodes[a]["functional_group"]
+        assert tenant.graph.nodes[b]["functional_group"] == group
+        pool = set(FUNCTIONAL_GROUPS[group])
+        # Both roles draw only from their group's pool (plus the anchor).
+        assert _group_actions(sets, a) <= pool
+        assert _group_actions(sets, b) <= pool
+        # Exact overlap follows the declared schedule -- including ZERO.
+        overlap = len(_group_actions(sets, a) & _group_actions(sets, b))
+        assert overlap == FUNCTIONAL_OVERLAP_CYCLE[k % len(FUNCTIONAL_OVERLAP_CYCLE)]
+        overlaps.append(overlap)
+        # Anchor present for projection connectivity.
+        assert CONSOLIDATION_ANCHOR in sets[a] and CONSOLIDATION_ANCHOR in sets[b]
+    # The pair Jaccard is blind to by construction really exists.
+    assert 0 in overlaps
+
+    for cohort in tenant.functional_cohort_roles:
+        assert tenant.graph.nodes[cohort].get("is_functional_cohort")
+
+
+def test_default_tenant_has_no_functional_pairs_and_is_unchanged():
+    baseline = generate_tenant(seed=1, chain_length=3, density="low", n_chains=2)
+    withparam = generate_tenant(seed=1, chain_length=3, density="low", n_chains=2,
+                                n_functional_pairs=0)
+    assert baseline.functional_role_pairs == []
+    assert baseline.functional_cohort_roles == []
+    # n_functional_pairs=0 must be byte-identical to the pre-feature generator.
+    assert set(baseline.graph.nodes()) == set(withparam.graph.nodes())
+    assert set(baseline.graph.edges()) == set(withparam.graph.edges())
+
+
+# --------------------------------------------------------------------------
+# functional benchmark: the enforced finding is a TIE, not a node2vec win
+# --------------------------------------------------------------------------
+
+def test_functional_benchmark_finding_jaccard_ties_node2vec():
+    """Enforce the OBSERVED functional-benchmark relationship (a tie), not the
+    expected one. The hypothesis was node2vec_recall > jaccard_recall on
+    functional pairs (Jaccard cannot see a zero-exact-overlap pair directly).
+    The benchmark falsified it: average-linkage clustering reaches those pairs
+    TRANSITIVELY through the group cohorts each role overlaps -- the same
+    co-occurrence structure node2vec walks -- so Jaccard also scores perfect
+    recall, including the zero-overlap pairs. Since node2vec loses the exact
+    benchmark and only ties here, it is not earning its dependency; this test
+    is the recorded evidence for dropping it."""
+    for s in (0, 1, 2):
+        tenant = generate_tenant(seed=s, chain_length=3, density="low",
+                                 n_chains=1, n_functional_pairs=4)
+        jac = evaluate_functional_tenant(tenant, "jaccard")
+        n2v = evaluate_functional_tenant(tenant, "node2vec")
+        # Jaccard catches every planted pair -- including the zero-overlap one.
+        assert jac.recall == 1.0
+        # node2vec does NOT beat it (the tie; both perfect on this grid).
+        assert n2v.f1 <= jac.f1
+
+
+# --------------------------------------------------------------------------
+# cross-process determinism (stable hashfxn, not PYTHONHASHSEED-dependent)
+# --------------------------------------------------------------------------
+
+_DIGEST_SNIPPET = r"""
+import warnings; warnings.filterwarnings("ignore")
+import hashlib, sys
+sys.path.insert(0, {repo!r})
+import numpy as np
+from tests.test_role_mining import build_known_graph
+from src.graph.role_mining import embed_roles
+
+emb = embed_roles(build_known_graph(), seed=7)
+vec = np.concatenate([emb[r] for r in sorted(emb)])
+print(hashlib.md5(vec.round(8).tobytes()).hexdigest())
+"""
+
+
+def _embedding_digest_in_subprocess(hashseed: str) -> str:
+    import subprocess
+
+    env = dict(**__import__("os").environ, PYTHONHASHSEED=hashseed)
+    result = subprocess.run(
+        [sys.executable, "-c", _DIGEST_SNIPPET.format(repo=repo_root)],
+        capture_output=True, text=True, env=env, timeout=300,
+    )
+    assert result.returncode == 0, result.stderr
+    return result.stdout.strip().splitlines()[-1]
+
+
+def test_embeddings_are_deterministic_across_processes():
+    """Same graph, two interpreters launched with DIFFERENT hash seeds ->
+    identical embeddings. gensim seeds token vectors from hashfxn(token); we
+    pass a stable md5-based hashfxn, so reproducibility does not depend on the
+    caller remembering to pin PYTHONHASHSEED."""
+    d0 = _embedding_digest_in_subprocess("0")
+    d1 = _embedding_digest_in_subprocess("12345")
+    assert d0 == d1

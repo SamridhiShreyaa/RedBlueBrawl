@@ -33,13 +33,26 @@ operates on.
 
 Determinism
 -----------
-node2vec's walks and the underlying gensim Word2Vec are seeded and run with a
-single worker, so within a process the same graph yields the same embeddings
-(and therefore the same clusters). AgglomerativeClustering is deterministic.
+Embeddings are deterministic **across processes**, not just within one:
+
+* node2vec walks and gensim Word2Vec are seeded and run single-worker;
+* gensim is given a stable ``hashfxn`` (:func:`stable_hash`, md5-based) instead
+  of Python's builtin ``hash``, whose value for strings changes per interpreter
+  launch unless ``PYTHONHASHSEED`` is pinned -- gensim seeds each token's
+  initial vector from it, so the builtin would make embeddings differ run to
+  run. Pinning the hash function at the source is strictly stronger than
+  requiring every caller to export ``PYTHONHASHSEED``;
+* the projection is built in sorted order (set iteration order is also
+  hash-randomized, and graph insertion order feeds the walk order).
+
+AgglomerativeClustering is deterministic. ``tests/test_role_mining.py`` proves
+cross-process determinism by embedding the same graph in subprocesses launched
+with *different* ``PYTHONHASHSEED`` values.
 """
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from dataclasses import dataclass, field
 from itertools import combinations
@@ -75,6 +88,34 @@ DEFAULT_SEED = 42
 # Jaccard baseline beats node2vec (see eval/README.md).
 DEFAULT_COSINE_DISTANCE = 0.15
 DEFAULT_JACCARD_DISTANCE = 0.30
+
+# Operating points for the FUNCTIONAL-similarity benchmark (same-job roles with
+# partial/zero exact overlap; see eval/role_mining_eval.py). Functional pairs
+# embed in a looser band (cosine sim ~0.45-0.75) than exact near-duplicates
+# (~0.85+), so both methods get their own symmetrically-swept threshold --
+# each method's best mean F1 on that benchmark, same procedure as the exact
+# thresholds above. Sweep (seeds 0-2 x low/medium):
+#   * node2vec  perfect F1 band at cosine distance 0.40-0.55 (0.60 -> 0.917,
+#     0.65 -> 0.344 as distractor blobs merge in); midpoint 0.50 chosen.
+#   * jaccard   perfect F1 band at distance 0.75-0.85 (0.70 -> 0.952,
+#     0.90 -> 0.250 total collapse); midpoint 0.80 chosen. Jaccard reaches
+#     zero-exact-overlap pairs TRANSITIVELY: average-linkage clustering merges
+#     the pair through group cohorts each role overlaps -- the same
+#     co-occurrence channel node2vec walks. That transitivity is why the
+#     functional benchmark ended in a tie (see eval/README.md).
+FUNCTIONAL_COSINE_DISTANCE = 0.50
+FUNCTIONAL_JACCARD_DISTANCE = 0.80
+
+
+def stable_hash(token: str) -> int:
+    """Deterministic string hash for gensim (md5-based, PYTHONHASHSEED-proof).
+
+    gensim seeds each vocabulary token's initial vector from ``hashfxn(token)``;
+    the default is Python's builtin ``hash``, which is salted per interpreter
+    launch, making embeddings irreproducible across processes. This replacement
+    pins cross-process determinism at the source.
+    """
+    return int(hashlib.md5(str(token).encode("utf-8")).hexdigest()[:8], 16)
 
 
 # --------------------------------------------------------------------------
@@ -141,7 +182,10 @@ def build_role_action_graph(graph: nx.DiGraph) -> nx.Graph:
     for role, actions in role_action_sets(graph).items():
         rnode = ROLE_PREFIX + role
         proj.add_node(rnode, kind="role", role_id=role)
-        for action in actions:
+        # Sorted: set iteration order is hash-randomized per interpreter launch,
+        # and graph insertion order feeds node2vec's walk order -- unsorted
+        # iteration would silently break cross-process determinism.
+        for action in sorted(actions):
             anode = ACTION_PREFIX + action
             proj.add_node(anode, kind="action", action=action)
             proj.add_edge(rnode, anode)
@@ -195,7 +239,10 @@ def embed_roles(
         seed=seed,
         quiet=True,
     )
-    model = n2v.fit(window=window, min_count=1, batch_words=4, seed=seed, workers=1)
+    # hashfxn=stable_hash pins gensim's per-token init vectors so embeddings
+    # reproduce across interpreter launches (see module docstring).
+    model = n2v.fit(window=window, min_count=1, batch_words=4, seed=seed,
+                    workers=1, hashfxn=stable_hash)
 
     embeddings: Dict[str, np.ndarray] = {}
     for rnode in connected_roles:

@@ -121,21 +121,26 @@ planted near-duplicate roles (`python eval/role_mining_eval.py`):
   strong, simple baseline.
 * **`count`** — the legacy permission-count threshold. A floor, not a competitor.
 
-**Honest result (mean over the benchmark grid):**
+**Honest result (mean over the benchmark grid, both benchmarks):**
 
-| method   | precision | recall |   f1   |
-| -------- | :-------: | :----: | :----: |
-| jaccard  |   0.80    |  1.00  | **0.88** |
-| node2vec |   0.47    |  0.88  |   0.59   |
-| count    |   0.09    |  1.00  |   0.16   |
+| benchmark  | method   | precision | recall |   f1   |
+| ---------- | -------- | :-------: | :----: | :----: |
+| exact      | jaccard  |   0.80    |  1.00  | **0.88** |
+| exact      | node2vec |   0.50    |  0.90  |   0.62   |
+| exact      | count    |   0.09    |  1.00  |   0.16   |
+| functional | jaccard  |   1.00    |  1.00  | **1.00** |
+| functional | node2vec |   1.00    |  1.00  | **1.00** |
+| functional | count    |   0.14    |  1.00  |   0.25   |
 
 node2vec is *real* role mining and dramatically better than the count threshold
-the README used to imply — but on this task it **does not beat the Jaccard
-baseline**: it over-merges structurally-similar-but-distinct roles, which costs
-precision. Jaccard-on-permission-sets is simpler and better for exact/near
-overlap. node2vec's advantage would show on fuzzy/transitive similarity, not the
-exact-overlap case this benchmark measures; we report it as it is rather than
-against the weakest baseline. See [`eval/README.md`](eval/README.md#role-mining-benchmark).
+the README used to imply — but it **loses the exact-overlap benchmark** to the
+Jaccard baseline (over-merging costs precision) and only **ties the functional
+benchmark** built specifically to showcase an embedding's edge (same-job roles
+with partial/zero exact overlap): agglomerative clustering lets plain Jaccard
+reach zero-overlap pairs *transitively* through group cohorts — the same
+co-occurrence signal node2vec walks. There is no benchmark where node2vec wins,
+so it is dropped and `jaccard` is the recommended method. Full analysis:
+[`eval/README.md`](eval/README.md#role-mining-benchmarks).
 
 **2. Start Neo4j with one command:**
 
