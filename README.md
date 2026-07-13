@@ -34,7 +34,11 @@ Our system:
 * Detection of excessive privileges
 * **Counterfactual attack-path risk scoring** — permissions are ranked by how many
   reachable privilege-escalation routes their removal would break (`do(grant = removed)`,
-  computed as deterministic graph recomputation, not a probabilistic causal model)
+  computed as deterministic graph recomputation, not a probabilistic causal model). Two
+  scorers: a signature-gated baseline, and a **structural-reachability scorer**
+  (`ReachabilityRiskScorer`, recommended) that follows real role→role trust edges to
+  sensitive targets and so generalises to escalation techniques whose action names appear
+  in no hardcoded list (see `eval/` for the novel-technique generalization benchmark)
 * Self-healing permission recommendations
 * Visual role-access insights
 
@@ -57,11 +61,33 @@ cp .env.example .env
 All Neo4j connection settings live in one place (`src/config.py`) and are read
 from these environment variables (defaults shown):
 
-| Variable         | Default                  | Purpose                     |
-| ---------------- | ------------------------ | --------------------------- |
-| `NEO4J_URI`      | `bolt://localhost:7687`  | Bolt endpoint               |
-| `NEO4J_USER`     | `neo4j`                  | Username                    |
-| `NEO4J_PASSWORD` | `changeme`               | Password                    |
+| Variable              | Default                  | Purpose                              |
+| --------------------- | ------------------------ | ------------------------------------ |
+| `NEO4J_URI`           | `bolt://localhost:7687`  | Bolt endpoint                        |
+| `NEO4J_USER`          | `neo4j`                  | Username                             |
+| `NEO4J_PASSWORD`      | `changeme`               | Password                             |
+| `RISK_SCORER_METHOD`  | `signature`              | Which risk scorer the pipeline uses  |
+
+### Choosing the risk scorer
+
+The pipeline builds its scorer through `make_risk_scorer(graph)`, which reads
+`RISK_SCORER_METHOD` (via `src/config.py`):
+
+* **`signature`** (default) — `SignatureCounterfactualScorer`. Identifies
+  escalation by action-name membership in hardcoded lists. Works on any graph,
+  including the current synthetic Neo4j dataset, which exposes only action names.
+* **`reachability`** — `ReachabilityRiskScorer`. Follows real role→role **trust
+  edges** to structurally-sensitive targets, so it generalises to escalation
+  techniques whose action names are in no list (see `eval/` for the
+  novel-technique benchmark). It **requires trust-edge data** on the graph; if
+  you select it on a graph without any, `make_risk_scorer` raises immediately
+  with a clear message rather than silently returning all-zero scores.
+
+The default stays `signature` today because the synthetic Neo4j dataset carries
+no trust/AssumeRolePolicy structure. **Reachability becomes the recommended
+default once real IAM ingestion with trust-policy data lands (Feature 9)** — at
+that point it is a one-line config change (`RISK_SCORER_METHOD=reachability`),
+not a re-architecture.
 
 **2. Start Neo4j with one command:**
 

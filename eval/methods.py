@@ -10,13 +10,17 @@ Methods:
     * :class:`HeuristicMethod` -- the project's original pipeline: the legacy
       weighted-sum scorer (HeuristicRiskScorer) for detection, RedAgent +
       BlueAgent for remediation. This is the baseline to beat.
-    * :class:`CounterfactualMethod` -- identical attack discovery and
-      remediation, but detection comes from the counterfactual attack-path
-      scorer (CounterfactualRiskScorer). Because remediation is shared with the
-      heuristic, its path-break rate is identical by construction -- so any
-      difference in the table is attributable to the scorer alone.
+    * :class:`SignatureCounterfactualMethod` -- counterfactual detection gated
+      on a hardcoded ASSUME/PRIVESC action vocabulary.
+    * :class:`ReachabilityMethod` -- counterfactual detection driven by real
+      trust-edge reachability to sensitive targets; no action-name lists, so it
+      generalises to novel escalation techniques.
     * :class:`RandomMethod` -- uniform random with a budget matched to the
       heuristic, isolating targeting quality from spend.
+
+All three non-random methods share RedAgent+BlueAgent remediation, so their
+path-break columns are identical by construction and every detection difference
+is attributable to the scorer alone.
 """
 
 from __future__ import annotations
@@ -30,9 +34,10 @@ import networkx as nx
 from src.adversarial.blue_agent import BlueAgent
 from src.adversarial.red_agent import RedAgent
 from src.causal.risk_scorer import (
-    CounterfactualRiskScorer,
     HeuristicRiskScorer,
+    ReachabilityRiskScorer,
     RiskLevel,
+    SignatureCounterfactualScorer,
 )
 
 Edge = Tuple[str, str]
@@ -95,18 +100,42 @@ class HeuristicMethod:
         )
 
 
-class CounterfactualMethod:
-    """Counterfactual attack-path detection + the SAME remediation as heuristic.
+class SignatureCounterfactualMethod:
+    """Signature-gated counterfactual detection + the SAME remediation as heuristic.
 
     Only the scorer differs from :class:`HeuristicMethod`, so the path-break
     column is identical by construction and the detection metrics isolate the
-    scorer's contribution.
+    scorer's contribution. Blind to escalation actions outside its hardcoded
+    ASSUME/PRIVESC vocabulary (see the novel-technique benchmark).
     """
 
-    name = "counterfactual"
+    name = "signature_cf"
 
     def run(self, graph: nx.DiGraph, budgets: Optional[Dict[str, int]] = None) -> MethodOutput:
-        predicted = _risky_from_scorer(CounterfactualRiskScorer(graph))
+        predicted = _risky_from_scorer(SignatureCounterfactualScorer(graph))
+        attack_paths, removed_edges, removed_nodes = _discover_and_remediate(graph)
+        for attack in attack_paths:
+            predicted.update(attack.permissions_used)
+        return MethodOutput(
+            predicted_risky_perms=predicted,
+            removed_edges=removed_edges,
+            removed_nodes=removed_nodes,
+        )
+
+
+class ReachabilityMethod:
+    """Structural-reachability counterfactual detection + the SAME remediation.
+
+    Detection follows real trust-edge reachability to sensitive targets, so it
+    generalises to escalation actions absent from any hardcoded list. Shares
+    remediation with the heuristic, so its path-break column is identical and
+    the detection metrics isolate the scorer.
+    """
+
+    name = "reachability_cf"
+
+    def run(self, graph: nx.DiGraph, budgets: Optional[Dict[str, int]] = None) -> MethodOutput:
+        predicted = _risky_from_scorer(ReachabilityRiskScorer(graph))
         attack_paths, removed_edges, removed_nodes = _discover_and_remediate(graph)
         for attack in attack_paths:
             predicted.update(attack.permissions_used)
@@ -155,4 +184,9 @@ class RandomMethod:
 
 def default_methods(random_seed: int = 0) -> List[object]:
     """The method roster run_eval evaluates, in table order."""
-    return [HeuristicMethod(), CounterfactualMethod(), RandomMethod(seed=random_seed)]
+    return [
+        HeuristicMethod(),
+        SignatureCounterfactualMethod(),
+        ReachabilityMethod(),
+        RandomMethod(seed=random_seed),
+    ]

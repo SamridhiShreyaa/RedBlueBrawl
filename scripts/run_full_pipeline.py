@@ -18,7 +18,7 @@ try:
     from src.graph.builder import IAMGraphBuilder
     from src.adversarial.red_agent import RedAgent
     from src.adversarial.blue_agent import BlueAgent
-    from src.causal.risk_scorer import CounterfactualRiskScorer
+    from src.causal.risk_scorer import make_risk_scorer
 
 except ImportError as e:
     print(f"Import error: {e}")
@@ -113,7 +113,7 @@ def orchestrate_full_pipeline():
         print("\n[PHASE 6] Counterfactual Risk Analysis - ORIGINAL Graph...")
         print("-" * 80)
 
-        original_scorer = CounterfactualRiskScorer(graph)
+        original_scorer = make_risk_scorer(graph)
         original_risk = original_scorer.generate_risk_report()
         
         print(f"Risk Distribution:")
@@ -128,7 +128,7 @@ def orchestrate_full_pipeline():
         print("\n[PHASE 7] Counterfactual Risk Analysis - HARDENED Graph...")
         print("-" * 80)
 
-        hardened_scorer = CounterfactualRiskScorer(hardened_graph)
+        hardened_scorer = make_risk_scorer(hardened_graph)
         hardened_risk = hardened_scorer.generate_risk_report()
         
         print(f"Risk Distribution:")
