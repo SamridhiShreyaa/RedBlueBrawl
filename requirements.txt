@@ -12,7 +12,9 @@ pydantic
 structlog
 python-dotenv
 faker
-node2vec
+# node2vec was removed: benchmarked head-to-head for role mining and never
+# beat Jaccard-on-permission-sets (lost exact, tied functional) -- see
+# eval/README.md "Role-mining benchmarks" and evidence commit 25a2c2c.
 torch
 stable-baselines3
 gymnasium

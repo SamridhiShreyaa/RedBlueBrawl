@@ -30,12 +30,13 @@ Our system:
 ## Key Features
 
 * IAM relationship graph modeling
-* **Role mining** — near-duplicate/redundant roles are found by embedding each
-  role over a role-permission graph with **node2vec** and clustering the
-  embeddings, then surfacing consolidation suggestions (`src/graph/role_mining.py`).
-  Two honest baselines ship alongside it (Jaccard-on-permission-sets and the
-  legacy permission-count threshold); see *Role mining* below and `eval/` for
-  the benchmark that compares them on planted duplicate roles.
+* **Role mining** — near-duplicate/redundant roles are found by clustering
+  roles on **Jaccard similarity of their permission sets** (average-linkage
+  agglomerative clustering), then surfacing consolidation suggestions
+  (`src/graph/role_mining.py`). A node2vec embedding variant was built,
+  benchmarked head-to-head on planted ground truth, and **dropped after never
+  beating this simpler method** — see *Role mining* below and `eval/` for both
+  benchmarks (exact duplicates and functional similarity).
 * Detection of excessive privileges
 * **Counterfactual attack-path risk scoring** — permissions are ranked by how many
   reachable privilege-escalation routes their removal would break (`do(grant = removed)`,
@@ -106,22 +107,24 @@ it says nothing about which roles are redundant with each other.)
 from src.graph.role_mining import consolidation_suggestions, find_near_duplicate_roles
 
 # roles whose permission sets overlap enough to merge, most-redundant first
-for s in consolidation_suggestions(graph, method="node2vec"):
+for s in consolidation_suggestions(graph):
     print(s.roles, "shared:", s.shared_actions, "tightness:", s.mean_jaccard)
 
-pairs = find_near_duplicate_roles(graph, method="jaccard")  # or "node2vec" / "count"
+pairs = find_near_duplicate_roles(graph)                    # exact near-duplicates
+loose = find_near_duplicate_roles(graph, distance_threshold=0.80)  # + functional similarity
 ```
 
-Three methods are provided and **benchmarked honestly** against tenants with
-planted near-duplicate roles (`python eval/role_mining_eval.py`):
+The method is **Jaccard clustering**: average-linkage agglomerative clustering
+on Jaccard distance of role permission sets. The legacy `count` threshold is
+kept as a baseline. A **node2vec** embedding variant was implemented and
+benchmarked honestly against tenants with planted ground truth
+(`python eval/role_mining_eval.py`) on two benchmarks — **exact** duplicates
+(same set ± 1-2 grants) and **functional** similarity (same-job roles with
+partial or *zero* exact overlap, built specifically to showcase an embedding's
+edge).
 
-* **`node2vec`** — embed each role over a role-permission bipartite projection,
-  then cluster the embeddings. This is the graph-algorithm the README promised.
-* **`jaccard`** — cluster on exact Jaccard overlap of permission sets. The
-  strong, simple baseline.
-* **`count`** — the legacy permission-count threshold. A floor, not a competitor.
-
-**Honest result (mean over the benchmark grid, both benchmarks):**
+**Honest result (mean over the benchmark grid, both benchmarks; node2vec rows
+recorded before it was dropped):**
 
 | benchmark  | method   | precision | recall |   f1   |
 | ---------- | -------- | :-------: | :----: | :----: |
@@ -132,15 +135,13 @@ planted near-duplicate roles (`python eval/role_mining_eval.py`):
 | functional | node2vec |   1.00    |  1.00  | **1.00** |
 | functional | count    |   0.14    |  1.00  |   0.25   |
 
-node2vec is *real* role mining and dramatically better than the count threshold
-the README used to imply — but it **loses the exact-overlap benchmark** to the
-Jaccard baseline (over-merging costs precision) and only **ties the functional
-benchmark** built specifically to showcase an embedding's edge (same-job roles
-with partial/zero exact overlap): agglomerative clustering lets plain Jaccard
-reach zero-overlap pairs *transitively* through group cohorts — the same
-co-occurrence signal node2vec walks. There is no benchmark where node2vec wins,
-so it is dropped and `jaccard` is the recommended method. Full analysis:
-[`eval/README.md`](eval/README.md#role-mining-benchmarks).
+node2vec **lost the exact benchmark** (over-merging costs precision) and only
+**tied the functional one**: agglomerative clustering lets plain Jaccard reach
+zero-overlap pairs *transitively* through group cohorts — the same
+co-occurrence signal node2vec's random walks exploit. With no benchmark where
+the embedding wins, it was **dropped along with its dependency**; the full
+implementation and reproducible comparison live at evidence commit `25a2c2c`.
+Full analysis: [`eval/README.md`](eval/README.md#role-mining-benchmarks).
 
 **2. Start Neo4j with one command:**
 

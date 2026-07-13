@@ -134,16 +134,17 @@ mining using graph algorithms" — on **two** pair-level benchmarks with planted
 python eval/role_mining_eval.py                 # both benchmarks, 5 seeds x {low,medium}
 ```
 
-Three methods are compared at the **pair level** (`src/graph/role_mining.py`):
+Methods compared at the **pair level** (`src/graph/role_mining.py`):
 
-- **`node2vec`** — embed each role over a role-permission **bipartite projection** (grants
-  collapsed to their action, so two roles granting the same actions become adjacent through
-  shared action nodes; per-grant nodes in the raw graph are role-scoped and would look
-  unrelated), then cluster the embeddings. This is the graph-algorithm the README promised.
-- **`jaccard`** — cluster roles on exact Jaccard overlap of their permission sets. The
-  strong, obvious baseline node2vec must actually beat to earn its keep.
+- **`jaccard`** — cluster roles on Jaccard overlap of their permission sets
+  (average-linkage agglomerative clustering). The recommended method.
 - **`count`** — the legacy permission-count threshold (`queries.get_high_privilege_roles`).
   It pairs any two big roles regardless of overlap; a floor, not a competitor.
+- **`node2vec`** *(dropped — rows below are its recorded evidence)* — embedded each role
+  over a role-permission **bipartite projection** (grants collapsed to their action, so two
+  roles granting the same actions become adjacent through shared action nodes), then
+  clustered the embeddings. Removed after the results below; the implementation and a fully
+  reproducible comparison live at evidence commit `25a2c2c`.
 
 ### Functional generator design (auditable, defined on its own terms)
 
@@ -165,11 +166,12 @@ unplanted; distractor–distractor pairs are excluded because the small benign a
 makes random distractors *genuine* exact near-duplicates, which the exact benchmark already
 measures.
 
-**Operating points**: functional pairs sit in a looser similarity band (cosine ~0.45–0.75)
-than exact duplicates (~0.85+), so each method got its own **symmetrically swept** threshold
-per benchmark (best mean F1, same procedure for both): node2vec cosine distance 0.15 exact /
-0.50 functional; jaccard distance 0.30 exact / 0.80 functional. Sweep tables are in
-`src/graph/role_mining.py` comments.
+**Operating points**: functional pairs sit in a looser similarity band than exact
+duplicates, so each method got its own **symmetrically swept** threshold per benchmark
+(best mean F1, same procedure for both): node2vec cosine distance 0.15 exact / 0.50
+functional; jaccard distance 0.30 exact / 0.80 functional. Sweeps: node2vec held perfect
+functional F1 for cosine distance 0.40–0.55 (0.65 → 0.344); jaccard for distance 0.75–0.85
+(0.90 → 0.250 total collapse; 0.70 → 0.952).
 
 ### Headline result — both benchmarks side by side
 
@@ -196,9 +198,12 @@ given shared clustering machinery, plain Jaccard extracts the same signal. Both 
 perfect across the full grid (verified through high density and across their threshold
 bands: jaccard holds F1 1.0 for distance 0.75–0.85, node2vec for 0.40–0.55).
 
-**Verdict — node2vec is not earning its dependency.** It *loses* exact (0.62 vs 0.88) and
-only *ties* functional; there is no benchmark where the embedding beats
+**Verdict — node2vec was not earning its dependency, so it was dropped.** It *loses* exact
+(0.62 vs 0.88) and only *ties* functional; there is no benchmark where the embedding beats
 Jaccard-plus-clustering. Per the pre-registered decision rule ("if node2vec doesn't beat
-Jaccard even on functional similarity, drop it"), node2vec is dropped in the commit after
-the one that lands this evidence — check out that evidence commit to reproduce the node2vec
-rows in the committed CSVs.
+Jaccard even on functional similarity, drop it"), the method and its dependency were removed
+in the commit after the evidence landed. The committed CSVs retain the node2vec rows as the
+record; to reproduce them, check out evidence commit `25a2c2c` (which contains the full
+implementation, its tests, and a cross-process embedding-determinism proof via a stable
+gensim ``hashfxn`` — also moot after the drop, since Jaccard clustering is exact set
+arithmetic with no seeds or hash-order sensitivity).

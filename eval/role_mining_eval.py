@@ -14,14 +14,20 @@ Measures whether a method can pair roles that do the same job via
 related-but-not-identical permissions -- the case set-overlap metrics are
 structurally blind to.
 
-Three methods are compared on both (did we flag the planted pair?):
+Methods compared (did we flag the planted pair?):
 
-    * ``node2vec``  -- embed roles over the role-permission bipartite graph and
-      cluster the embeddings (``src.graph.role_mining``).
-    * ``jaccard``   -- cluster roles on exact Jaccard overlap of their permission
-      sets. The strong baseline node2vec must actually beat to earn its keep.
+    * ``jaccard``   -- cluster roles on Jaccard overlap of their permission
+      sets (``src.graph.role_mining``). The recommended method.
     * ``count``     -- the legacy permission-count threshold. A floor, not a
       real competitor.
+
+A ``node2vec`` embedding method was also benchmarked here and then DROPPED: it
+lost the exact benchmark (F1 0.619 vs jaccard 0.877) and only tied the
+functional one (both 1.000 -- average-linkage clustering reaches
+zero-exact-overlap pairs transitively through group cohorts, the same
+co-occurrence channel the embedding walks). The committed results CSVs still
+carry its rows as recorded evidence; to reproduce them, check out the evidence
+commit (25a2c2c), which contains the full node2vec implementation.
 
 Scoring universes (each applied identically to every method):
 
@@ -55,7 +61,6 @@ from typing import Dict, List, Set, Tuple
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from src.graph.role_mining import (  # noqa: E402
-    FUNCTIONAL_COSINE_DISTANCE,
     FUNCTIONAL_JACCARD_DISTANCE,
     find_near_duplicate_roles,
 )
@@ -63,12 +68,11 @@ from eval.tenant import Tenant  # noqa: E402
 from eval.tenant_gen import generate_tenant  # noqa: E402
 
 RolePair = Tuple[str, str]
-METHODS = ["node2vec", "jaccard", "count"]
+METHODS = ["jaccard", "count"]
 
 # Per-benchmark clustering thresholds (swept symmetrically; see module doc).
 # "count" has no threshold -- it is the same permission-count rule everywhere.
 FUNCTIONAL_THRESHOLDS = {
-    "node2vec": FUNCTIONAL_COSINE_DISTANCE,
     "jaccard": FUNCTIONAL_JACCARD_DISTANCE,
     "count": None,
 }
